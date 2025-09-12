@@ -1,0 +1,72 @@
+name: CI/CD # pipeline's name that will appear in Github Actions
+
+on: # events that trigger our pipeline: push on any branch and release creation
+  push:
+  release:
+    types: [created]
+  pull_request:
+
+jobs: # jobs. We will have two jobs (test and publish) with multiple steps.
+  test:
+    # Our test job will run on ubuntu.
+    # We define matrix strategy for python-version so that
+    # our tests are run on multiple python versions:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run image # install poetry
+        uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: latest
+      - name: Install dependencies # install all dependencies
+        run: |
+          python -m pip install --upgrade pip
+          poetry config virtualenvs.create false --local
+          poetry install --all-extras
+          pip install pylint coveralls
+      #   python -m nltk.downloader punkt stopwords
+        env:
+          SETUPTOOLS_USE_DISTUTILS: local
+      - name: Pylint # Run pylint static analysis
+        run: |
+          poetry run pylint newspaper --fail-under=8.0
+      - name: mypy  # Run mypy static analysis
+        run: |
+          poetry run mypy  -p newspaper --config-file mypy.ini
+        env:
+          MYPYPATH: stubs
+      - name: Pytest # Run pytest
+        run: |
+          poetry run coverage run -m --source=newspaper pytest tests
+          poetry run coverage report
+      # - name: Coveralls # Send coverage metrics to coveralls.io
+      #   run: poetry run coveralls --service=github
+      #   env:
+      #     COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+
+  publish:
+    # Our publish job will only run on release creation events,
+    # and only if the test job has passed
+    if: github.event_name == 'release' && github.event.action == 'created'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.8"
+      - name: Run image
+        uses: abatilo/actions-poetry@v2
+        with:
+          poetry-version: latest
+      - name: Build and publish # publish newspaper4k to PyPI
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: poetry publish -u __token__ -p $PYPI_TOKEN --build
