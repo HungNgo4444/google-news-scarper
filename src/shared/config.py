@@ -1,7 +1,38 @@
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 from functools import lru_cache
+import logging
+
+
+def _get_env_file() -> str:
+    """Determine which environment file to load based on environment and container context."""
+    # Check if running in container
+    if os.path.exists("/.dockerenv") or os.environ.get("CONTAINER_RUNTIME"):
+        logging.info("Running in container environment")
+    
+    # Environment-specific env file loading
+    environment = os.environ.get("ENVIRONMENT", "development")
+    
+    # Priority order for env files:
+    # 1. .env.{environment} (e.g., .env.production)
+    # 2. .env.local (local overrides)
+    # 3. .env (default)
+    
+    possible_env_files = [
+        f".env.{environment}",
+        ".env.local", 
+        ".env"
+    ]
+    
+    for env_file in possible_env_files:
+        if os.path.exists(env_file):
+            logging.info(f"Loading environment from: {env_file}")
+            return env_file
+    
+    logging.warning("No environment file found, using environment variables only")
+    return ".env"  # Fallback, won't be loaded if doesn't exist
 
 
 class Settings(BaseSettings):
@@ -281,8 +312,63 @@ class Settings(BaseSettings):
             raise ValueError("JOB_CLEANUP_DAYS must not exceed 365 days")
         return v
     
+    # Container-aware API configuration
+    API_HOST: str = Field(
+        default="0.0.0.0",
+        description="API host binding address",
+        env="API_HOST"
+    )
+    
+    API_PORT: int = Field(
+        default=8000,
+        description="API port number",
+        env="API_PORT"
+    )
+    
+    # Container health check configuration
+    HEALTH_CHECK_INTERVAL: str = Field(
+        default="30s",
+        description="Container health check interval",
+        env="HEALTH_CHECK_INTERVAL"
+    )
+    
+    HEALTH_CHECK_TIMEOUT: str = Field(
+        default="10s",
+        description="Container health check timeout",
+        env="HEALTH_CHECK_TIMEOUT"
+    )
+    
+    HEALTH_CHECK_RETRIES: int = Field(
+        default=3,
+        description="Container health check retry count",
+        env="HEALTH_CHECK_RETRIES"
+    )
+    
+    # Container resource configuration
+    WEB_WORKERS: int = Field(
+        default=1,
+        description="Number of Uvicorn workers for production",
+        env="WEB_WORKERS"
+    )
+    
+    @field_validator("WEB_WORKERS")
+    @classmethod
+    def validate_web_workers(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("WEB_WORKERS must be positive")
+        if v > 16:
+            raise ValueError("WEB_WORKERS must not exceed 16")
+        return v
+    
+    @field_validator("API_PORT")
+    @classmethod
+    def validate_api_port(cls, v: int) -> int:
+        if v <= 0 or v > 65535:
+            raise ValueError("API_PORT must be between 1 and 65535")
+        return v
+
     model_config = {
-        "env_file": ".env",
+        "env_file": _get_env_file(),
         "env_file_encoding": "utf-8",
         "case_sensitive": True
     }

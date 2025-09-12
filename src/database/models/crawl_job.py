@@ -90,7 +90,7 @@ class CrawlJob(BaseModel):
     )
     
     # Additional metadata for job tracking
-    metadata: Mapped[Optional[dict]] = mapped_column(
+    job_metadata: Mapped[Optional[dict]] = mapped_column(
         JSONB,
         nullable=True,
         default=dict
@@ -144,8 +144,8 @@ class CrawlJob(BaseModel):
         Index("idx_crawl_jobs_status_created_at", "status", "created_at"),
         Index("idx_crawl_jobs_completed_at_status", "completed_at", "status"),
         
-        # GIN index for metadata JSONB column
-        Index("idx_crawl_jobs_metadata_gin", "metadata", postgresql_using="gin"),
+        # GIN index for job_metadata JSONB column
+        Index("idx_crawl_jobs_job_metadata_gin", "job_metadata", postgresql_using="gin"),
     )
     
     @property

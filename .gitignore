@@ -121,3 +121,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Project specific
+logs/
+data/
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,402 @@
+# Docker Compose configuration for Google News Scraper - Production Environment
+# Optimized for production deployment with enhanced security and performance
+version: '3.8'
+
+services:
+  # Database migration service (runs once)
+  migration:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: production
+    command: alembic upgrade head
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./src/database/migrations:/app/src/database/migrations:ro
+      - ./logs:/app/logs
+    networks:
+      - app-network
+    restart: on-failure
+
+  # FastAPI Web Application with horizontal scaling
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+      target: production
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - DATABASE_ECHO=false
+      - DATABASE_POOL_SIZE=${DATABASE_POOL_SIZE:-20}
+      - DATABASE_MAX_OVERFLOW=${DATABASE_MAX_OVERFLOW:-30}
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: always
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - app-network
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+    
+  # Celery Workers with horizontal scaling
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+      target: production
+    command: celery -A src.core.scheduler.celery_app worker --loglevel=info --concurrency=4 --max-tasks-per-child=1000 --queues=default,crawl,priority
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - C_FORCE_ROOT=1
+      - CELERY_WORKER_PREFETCH_MULTIPLIER=${CELERY_WORKER_PREFETCH_MULTIPLIER:-1}
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "celery", "-A", "src.core.scheduler.celery_app", "inspect", "ping"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 60s
+    restart: always
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - app-network
+    security_opt:
+      - no-new-privileges:true
+    
+  # Celery Beat Scheduler (single instance)
+  beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+      target: production
+    command: celery -A src.core.scheduler.celery_app beat --loglevel=info --pidfile=/tmp/celerybeat.pid
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - ENVIRONMENT=production
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - C_FORCE_ROOT=1
+    volumes:
+      - ./logs:/app/logs
+      - beat_data:/app/data/beat
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migration:
+        condition: service_completed_successfully
+    restart: always
+    deploy:
+      replicas: 1  # Must be exactly 1 for beat scheduler
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - app-network
+    security_opt:
+      - no-new-privileges:true
+
+  # PostgreSQL Database with optimized configuration
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./data/postgres_backup:/backup
+      - ./scripts/postgres_init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+      restart_policy:
+        condition: any
+        delay: 10s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - app-network
+    secrets:
+      - postgres_password
+    security_opt:
+      - no-new-privileges:true
+    command: >
+      postgres
+      -c max_connections=${POSTGRES_MAX_CONNECTIONS:-100}
+      -c shared_buffers=${POSTGRES_SHARED_BUFFERS:-256MB}
+      -c effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-1GB}
+      -c maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-64MB}
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=${POSTGRES_WORK_MEM:-4MB}
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
+      -c max_worker_processes=8
+      -c max_parallel_workers_per_gather=2
+      -c max_parallel_workers=8
+      -c wal_level=replica
+      -c max_wal_senders=3
+      -c archive_mode=on
+      -c archive_command='test ! -f /backup/%f && cp %p /backup/%f'
+
+  # Redis with persistence and optimization
+  redis:
+    image: redis:7-alpine
+    environment:
+      - REDIS_PASSWORD_FILE=/run/secrets/redis_password
+    volumes:
+      - redis_data:/data
+      - ./data/redis_backup:/backup
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$$(cat /run/secrets/redis_password)", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.2'
+          memory: 256M
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - app-network
+    secrets:
+      - redis_password
+    security_opt:
+      - no-new-privileges:true
+    command: >
+      sh -c "redis-server
+      --requirepass $$(cat /run/secrets/redis_password)
+      --maxmemory ${REDIS_MAX_MEMORY:-400mb}
+      --maxmemory-policy allkeys-lru
+      --save 900 1
+      --save 300 10
+      --save 60 10000
+      --appendonly yes
+      --appendfsync everysec
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
+      --tcp-keepalive 300"
+
+  # Nginx Reverse Proxy with SSL
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx.prod.conf:/etc/nginx/nginx.conf:ro
+      - ./data/ssl:/etc/nginx/ssl:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - web
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+    networks:
+      - app-network
+    security_opt:
+      - no-new-privileges:true
+
+  # Celery Flower Monitoring (production monitoring)
+  flower:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+      target: production
+    command: >
+      celery -A src.core.scheduler.celery_app flower 
+      --port=5555 
+      --address=0.0.0.0 
+      --basic_auth=${FLOWER_USERNAME}:${FLOWER_PASSWORD}
+      --url_prefix=flower
+    environment:
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND}
+      - C_FORCE_ROOT=1
+      - FLOWER_USERNAME=${FLOWER_USERNAME}
+      - FLOWER_PASSWORD=${FLOWER_PASSWORD}
+    depends_on:
+      - redis
+      - worker
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    networks:
+      - app-network
+    security_opt:
+      - no-new-privileges:true
+
+  # Log aggregation service (optional)
+  log-aggregator:
+    image: fluent/fluent-bit:latest
+    volumes:
+      - ./logs:/fluent-bit/logs:ro
+      - ./docker/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+    environment:
+      - LOG_LEVEL=info
+    restart: always
+    networks:
+      - app-network
+    profiles:
+      - logging
+
+# Persistent volumes for production data
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POSTGRES_DATA_PATH:-./data/postgres}
+  redis_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${REDIS_DATA_PATH:-./data/redis}
+  beat_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${BEAT_DATA_PATH:-./data/beat}
+  nginx_cache:
+    driver: local
+
+# Production network with custom subnet
+networks:
+  app-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+    driver_opts:
+      com.docker.network.bridge.name: google-news-net
+
+# Secrets management for production
+secrets:
+  postgres_password:
+    file: ${POSTGRES_PASSWORD_FILE:-./secrets/postgres_password.txt}
+  redis_password:
+    file: ${REDIS_PASSWORD_FILE:-./secrets/redis_password.txt}

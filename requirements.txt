@@ -19,3 +19,4 @@ requests>=2.27.1
 feedparser>=6.0.10
 nltk>=3.6.7
 gnews>=0.3.2
+psutil>=5.9.0

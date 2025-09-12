@@ -1,0 +1,99 @@
+# Specialized Dockerfile for Celery Worker containers
+# Optimized for background task processing with higher resource allocation
+
+# Stage 1: Base image with system dependencies
+FROM python:3.11-slim as base
+
+# Set environment variables for Python and Celery
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100 \
+    C_FORCE_ROOT=1
+
+# Install system dependencies required for web crawling
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    libxml2-dev \
+    libxslt1-dev \
+    libjpeg-dev \
+    libpng-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN groupadd --gid 1000 worker && \
+    useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home worker
+
+# Stage 2: Dependencies installation
+FROM base as dependencies
+
+# Switch to worker user for dependency installation
+USER worker
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements first for better layer caching
+COPY --chown=worker:worker requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Stage 3: Production worker image
+FROM base as production
+
+# Set working directory
+WORKDIR /app
+
+# Copy Python dependencies from dependencies stage
+COPY --from=dependencies /home/worker/.local /home/worker/.local
+
+# Copy application source code
+COPY src/ ./src/
+COPY newspaper4k-master/ ./newspaper4k-master/
+
+# Copy configuration files
+COPY alembic.ini .
+
+# Create necessary directories with proper permissions
+RUN mkdir -p /app/logs /app/data /app/celery && \
+    chown -R worker:worker /app
+
+# Switch to non-root user
+USER worker
+
+# Add user's local bin to PATH for installed packages
+ENV PATH=/home/worker/.local/bin:$PATH
+
+# Set Python path to include the application source
+ENV PYTHONPATH=/app:/app/src:/app/newspaper4k-master
+
+# Celery-specific environment variables
+ENV CELERY_WORKER_CONCURRENCY=4 \
+    CELERY_WORKER_LOGLEVEL=INFO \
+    CELERY_WORKER_MAX_TASKS_PER_CHILD=1000 \
+    CELERY_WORKER_DISABLE_RATE_LIMITS=False
+
+# Health check for Celery worker
+HEALTHCHECK --interval=60s --timeout=15s --start-period=60s --retries=3 \
+    CMD celery -A src.core.scheduler.celery_app inspect ping -d celery@${HOSTNAME} || exit 1
+
+# Default command - runs Celery worker
+CMD ["celery", "-A", "src.core.scheduler.celery_app", "worker", "--loglevel=info", "--concurrency=4", "--max-tasks-per-child=1000"]
+
+# Alternative commands can be overridden in docker-compose:
+# For Beat scheduler: ["celery", "-A", "src.core.scheduler.celery_app", "beat", "--loglevel=info"]
+# For Flower monitoring: ["celery", "-A", "src.core.scheduler.celery_app", "flower", "--port=5555"]
+
+# Labels for container metadata
+LABEL maintainer="Google News Scraper Team" \
+      version="1.0.0" \
+      description="Google News Scraper Celery Worker container" \
+      component="worker" \
+      org.opencontainers.image.source="https://github.com/company/google-news-scraper" \
+      org.opencontainers.image.title="Google News Scraper Worker" \
+      org.opencontainers.image.description="Containerized Celery worker for background task processing" \
+      org.opencontainers.image.version="1.0.0"
