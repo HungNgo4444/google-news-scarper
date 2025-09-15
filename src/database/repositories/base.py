@@ -116,82 +116,88 @@ class BaseRepository(Generic[T]):
     
     async def create(self, data: Dict[str, Any]) -> T:
         """Create a new model instance.
-        
+
         Args:
             data: Dictionary of field values for the new instance
-            
+
         Returns:
             Created model instance
-            
+
         Raises:
             Exception: If creation fails
         """
         async with get_db_session() as session:
-            async with session.begin():
-                try:
-                    instance = self.model_class(**data)
-                    session.add(instance)
-                    await session.flush()
-                    await session.refresh(instance)
-                    return instance
-                except Exception as e:
-                    logger.error(f"Failed to create {self.model_class.__name__}: {e}")
-                    raise
+            try:
+                instance = self.model_class(**data)
+                session.add(instance)
+                await session.commit()
+                await session.refresh(instance)
+                return instance
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Failed to create {self.model_class.__name__}: {e}")
+                raise
     
     async def update_by_id(self, id: UUID, data: Dict[str, Any]) -> Optional[T]:
         """Update a model instance by its ID.
-        
+
         Args:
             id: The UUID of the record to update
             data: Dictionary of field values to update
-            
+
         Returns:
             Updated model instance if found, None otherwise
         """
         async with get_db_session() as session:
-            async with session.begin():
-                try:
-                    # Add updated_at timestamp
-                    data['updated_at'] = datetime.now(timezone.utc)
-                    
-                    query = (
-                        update(self.model_class)
-                        .where(self.model_class.id == id)
-                        .values(**data)
-                        .execution_options(synchronize_session="fetch")
-                    )
-                    
-                    result = await session.execute(query)
-                    
-                    if result.rowcount == 0:
-                        return None
-                    
-                    # Fetch and return updated instance
-                    updated_instance = await self.get_by_id(id)
-                    return updated_instance
-                    
-                except Exception as e:
-                    logger.error(f"Failed to update {self.model_class.__name__} {id}: {e}")
-                    raise
+            try:
+                # Add updated_at timestamp
+                data['updated_at'] = datetime.now(timezone.utc)
+
+                query = (
+                    update(self.model_class)
+                    .where(self.model_class.id == id)
+                    .values(**data)
+                    .execution_options(synchronize_session="fetch")
+                )
+
+                result = await session.execute(query)
+
+                if result.rowcount == 0:
+                    return None
+
+                # Commit the update
+                await session.commit()
+
+                # Fetch and return updated instance from current session
+                updated_query = select(self.model_class).where(self.model_class.id == id)
+                updated_result = await session.execute(updated_query)
+                updated_instance = updated_result.scalar_one_or_none()
+                return updated_instance
+
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Failed to update {self.model_class.__name__} {id}: {e}")
+                raise
     
     async def delete_by_id(self, id: UUID) -> bool:
         """Delete a model instance by its ID.
-        
+
         Args:
             id: The UUID of the record to delete
-            
+
         Returns:
             True if deleted, False if not found
         """
         async with get_db_session() as session:
-            async with session.begin():
-                try:
-                    query = delete(self.model_class).where(self.model_class.id == id)
-                    result = await session.execute(query)
-                    return result.rowcount > 0
-                except Exception as e:
-                    logger.error(f"Failed to delete {self.model_class.__name__} {id}: {e}")
-                    raise
+            try:
+                query = delete(self.model_class).where(self.model_class.id == id)
+                result = await session.execute(query)
+                await session.commit()
+                return result.rowcount > 0
+            except Exception as e:
+                await session.rollback()
+                logger.error(f"Failed to delete {self.model_class.__name__} {id}: {e}")
+                raise
     
     async def count(self) -> int:
         """Count the total number of model instances.

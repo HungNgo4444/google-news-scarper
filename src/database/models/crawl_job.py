@@ -11,7 +11,7 @@ from .base import BaseModel
 
 class CrawlJobStatus(str, Enum):
     PENDING = "pending"
-    RUNNING = "running" 
+    RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -29,7 +29,7 @@ class CrawlJob(BaseModel):
     
     # Job status tracking
     status: Mapped[CrawlJobStatus] = mapped_column(
-        SQLEnum(CrawlJobStatus),
+        SQLEnum(CrawlJobStatus, name="crawljobstatus", values_callable=lambda x: [e.value for e in x]),
         nullable=False,
         default=CrawlJobStatus.PENDING,
         index=True

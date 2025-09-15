@@ -28,8 +28,10 @@ target_metadata = Base.metadata
 settings = get_settings()
 database_url = settings.DATABASE_URL
 
-# Convert postgresql:// to postgresql+psycopg2:// for migrations
-if database_url.startswith("postgresql://"):
+# Convert async postgresql+asyncpg:// to sync postgresql+psycopg2:// for migrations
+if database_url.startswith("postgresql+asyncpg://"):
+    database_url = database_url.replace("postgresql+asyncpg://", "postgresql+psycopg2://", 1)
+elif database_url.startswith("postgresql://"):
     database_url = database_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 # Set the database URL in the config

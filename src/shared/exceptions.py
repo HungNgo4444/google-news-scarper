@@ -268,6 +268,34 @@ class ValidationError(BaseAppException):
         )
 
 
+# Circuit Breaker and Reliability Errors
+class CircuitBreakerOpenError(InfrastructureError):
+    """Raised when circuit breaker is open."""
+
+    def __init__(self, service_name: str, details: Optional[Dict[str, Any]] = None):
+        message = f"Circuit breaker is open for service: {service_name}"
+        super().__init__(
+            code=ErrorCode.INTERNAL_SERVER_ERROR,  # Using existing error code
+            message=message,
+            details=details or {"service_name": service_name},
+            retryable=True,
+            retry_after=30
+        )
+
+
+class CrawlerError(ExternalServiceError):
+    """General crawler error for backward compatibility."""
+
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None, retryable: bool = True):
+        super().__init__(
+            code=ErrorCode.EXTRACTION_FAILED,
+            message=message,
+            details=details,
+            retryable=retryable,
+            retry_after=60
+        )
+
+
 # Legacy exceptions for backward compatibility
 BaseScraperError = BaseAppException  # Alias for backward compatibility
 ConfigurationError = ValidationError  # Map to ValidationError

@@ -2,6 +2,7 @@ import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, create_async_engine, async_sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy import text
 from contextlib import asynccontextmanager
 from src.shared.config import Settings, get_settings
 
@@ -65,8 +66,19 @@ class DatabaseConnection:
     
     async def close(self) -> None:
         if self._engine:
-            await self._engine.dispose()
-            logger.info("Database connection closed")
+            try:
+                await self._engine.dispose()
+                logger.info("Database connection closed")
+            except RuntimeError as e:
+                # Handle "Event loop is closed" errors in worker contexts
+                if "Event loop is closed" in str(e):
+                    logger.warning("Event loop closed during engine disposal - this is normal in worker contexts")
+                else:
+                    logger.error(f"Error during engine disposal: {e}")
+                    raise
+            except Exception as e:
+                logger.error(f"Unexpected error during engine disposal: {e}")
+                raise
     
     @asynccontextmanager
     async def get_session(self) -> AsyncGenerator[AsyncSession, None]:
@@ -76,13 +88,11 @@ class DatabaseConnection:
             except Exception:
                 await session.rollback()
                 raise
-            finally:
-                await session.close()
     
     async def health_check(self) -> bool:
         try:
             async with self.get_session() as session:
-                result = await session.execute("SELECT 1")
+                result = await session.execute(text("SELECT 1"))
                 return result.scalar() == 1
         except Exception as e:
             logger.error(f"Database health check failed: {e}")
@@ -105,6 +115,7 @@ def get_database_connection(settings: Settings | None = None) -> DatabaseConnect
     return _db_connection
 
 
+@asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
     db_connection = get_database_connection()
     async with db_connection.get_session() as session:
@@ -114,5 +125,15 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
 async def close_database_connection() -> None:
     global _db_connection
     if _db_connection:
-        await _db_connection.close()
-        _db_connection = None
+        try:
+            await _db_connection.close()
+        except RuntimeError as e:
+            # Handle "Event loop is closed" errors in worker contexts
+            if "Event loop is closed" in str(e):
+                logger.warning("Event loop closed during connection cleanup - this is normal in worker contexts")
+            else:
+                logger.error(f"Error during connection cleanup: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error during connection cleanup: {e}")
+        finally:
+            _db_connection = None

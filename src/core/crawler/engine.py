@@ -649,8 +649,9 @@ class CrawlerEngine:
             if hasattr(self.google_news, 'set_country'):
                 self.google_news.set_country(country)
             
-            # Execute search with query
-            return self.google_news.search(search_query)
+            # Execute search with keyword
+            self.google_news.download(keyword=search_query, top_news=False)
+            return self.google_news.generate_articles(limit=100)
             
         except Exception as e:
             # Log the error but re-raise to be handled by the calling method

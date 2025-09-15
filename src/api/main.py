@@ -32,6 +32,7 @@ from src.shared.config import get_settings
 from src.database.connection import get_database_connection, close_database_connection
 from src.shared.health import get_health_checker
 from src.api.routes.categories import router as categories_router
+from src.api.routes.jobs import router as jobs_router
 
 # Configure structured logging
 structlog.configure(
@@ -108,18 +109,30 @@ settings = get_settings()
 
 # CORS middleware configuration
 if settings.ENVIRONMENT == "development":
+    # Parse CORS origins from settings
+    import json
+    try:
+        dev_origins = json.loads(settings.DEV_CORS_ORIGINS)
+    except (json.JSONDecodeError, TypeError):
+        dev_origins = ["http://localhost:3000", "http://localhost:3001"]  # Fallback
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # In production, specify actual origins
+        allow_origins=dev_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 else:
     # Production CORS - more restrictive
+    try:
+        prod_origins = json.loads(settings.PROD_CORS_ORIGINS)
+    except (json.JSONDecodeError, TypeError):
+        prod_origins = []  # Fallback to no origins
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[],  # Configure specific origins in production
+        allow_origins=prod_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
         allow_headers=["*"],
@@ -382,10 +395,10 @@ async def root():
 
 # Include API routers
 app.include_router(categories_router)
+app.include_router(jobs_router)
 
 # Additional routers would be included here when available
 # app.include_router(articles_router)
-# app.include_router(crawl_jobs_router)
 
 
 if __name__ == "__main__":

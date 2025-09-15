@@ -1,7 +1,7 @@
 import os
 from typing import Optional
 from pydantic_settings import BaseSettings
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, ConfigDict
 from functools import lru_cache
 import logging
 
@@ -350,7 +350,504 @@ class Settings(BaseSettings):
         description="Number of Uvicorn workers for production",
         env="WEB_WORKERS"
     )
-    
+
+    # PostgreSQL Container Configuration
+    POSTGRES_DB: str = Field(
+        default="google_news",
+        description="PostgreSQL database name",
+        env="POSTGRES_DB"
+    )
+
+    POSTGRES_USER: str = Field(
+        default="postgres",
+        description="PostgreSQL username",
+        env="POSTGRES_USER"
+    )
+
+    POSTGRES_PASSWORD: str = Field(
+        default="postgres",
+        description="PostgreSQL password",
+        env="POSTGRES_PASSWORD"
+    )
+
+    # PostgreSQL Performance Tuning
+    POSTGRES_MAX_CONNECTIONS: int = Field(
+        default=100,
+        description="PostgreSQL max connections",
+        env="POSTGRES_MAX_CONNECTIONS"
+    )
+
+    POSTGRES_SHARED_BUFFERS: str = Field(
+        default="256MB",
+        description="PostgreSQL shared buffers",
+        env="POSTGRES_SHARED_BUFFERS"
+    )
+
+    POSTGRES_EFFECTIVE_CACHE_SIZE: str = Field(
+        default="1GB",
+        description="PostgreSQL effective cache size",
+        env="POSTGRES_EFFECTIVE_CACHE_SIZE"
+    )
+
+    POSTGRES_MAINTENANCE_WORK_MEM: str = Field(
+        default="64MB",
+        description="PostgreSQL maintenance work memory",
+        env="POSTGRES_MAINTENANCE_WORK_MEM"
+    )
+
+    POSTGRES_WORK_MEM: str = Field(
+        default="4MB",
+        description="PostgreSQL work memory",
+        env="POSTGRES_WORK_MEM"
+    )
+
+    # Redis Configuration
+    REDIS_MAX_MEMORY: str = Field(
+        default="400mb",
+        description="Redis max memory setting",
+        env="REDIS_MAX_MEMORY"
+    )
+
+    # Container Data Paths
+    POSTGRES_DATA_PATH: str = Field(
+        default="./data/postgres",
+        description="PostgreSQL data volume path",
+        env="POSTGRES_DATA_PATH"
+    )
+
+    REDIS_DATA_PATH: str = Field(
+        default="./data/redis",
+        description="Redis data volume path",
+        env="REDIS_DATA_PATH"
+    )
+
+    BEAT_DATA_PATH: str = Field(
+        default="./data/beat",
+        description="Celery beat data volume path",
+        env="BEAT_DATA_PATH"
+    )
+
+    # SSL/TLS Configuration
+    SSL_CERT_PATH: str = Field(
+        default="/etc/nginx/ssl/cert.pem",
+        description="SSL certificate path",
+        env="SSL_CERT_PATH"
+    )
+
+    SSL_KEY_PATH: str = Field(
+        default="/etc/nginx/ssl/key.pem",
+        description="SSL private key path",
+        env="SSL_KEY_PATH"
+    )
+
+    SSL_CA_CERT_PATH: str = Field(
+        default="/etc/nginx/ssl/ca-cert.pem",
+        description="SSL CA certificate path",
+        env="SSL_CA_CERT_PATH"
+    )
+
+    SSL_DHPARAM_PATH: str = Field(
+        default="/etc/nginx/ssl/dhparam.pem",
+        description="SSL DH parameters path",
+        env="SSL_DHPARAM_PATH"
+    )
+
+    # Secrets Management
+    POSTGRES_PASSWORD_FILE: str = Field(
+        default="./secrets/postgres_password.txt",
+        description="PostgreSQL password file path",
+        env="POSTGRES_PASSWORD_FILE"
+    )
+
+    REDIS_PASSWORD_FILE: str = Field(
+        default="./secrets/redis_password.txt",
+        description="Redis password file path",
+        env="REDIS_PASSWORD_FILE"
+    )
+
+    # Monitoring
+    FLOWER_USERNAME: str = Field(
+        default="admin",
+        description="Celery Flower admin username",
+        env="FLOWER_USERNAME"
+    )
+
+    FLOWER_PASSWORD: str = Field(
+        default="change_this_password",
+        description="Celery Flower admin password",
+        env="FLOWER_PASSWORD"
+    )
+
+    HEALTH_CHECK_START_PERIOD: str = Field(
+        default="40s",
+        description="Container health check start period",
+        env="HEALTH_CHECK_START_PERIOD"
+    )
+
+    # Docker Compose Configuration
+    COMPOSE_PROJECT_NAME: str = Field(
+        default="google-news-scraper",
+        description="Docker Compose project name",
+        env="COMPOSE_PROJECT_NAME"
+    )
+
+    COMPOSE_FILE: str = Field(
+        default="docker-compose.yml",
+        description="Docker Compose file path",
+        env="COMPOSE_FILE"
+    )
+
+    # Container Resource Limits
+    WEB_CPU_LIMIT: str = Field(
+        default="1.0",
+        description="Web container CPU limit",
+        env="WEB_CPU_LIMIT"
+    )
+
+    WEB_MEMORY_LIMIT: str = Field(
+        default="512M",
+        description="Web container memory limit",
+        env="WEB_MEMORY_LIMIT"
+    )
+
+    WEB_CPU_RESERVATION: str = Field(
+        default="0.5",
+        description="Web container CPU reservation",
+        env="WEB_CPU_RESERVATION"
+    )
+
+    WEB_MEMORY_RESERVATION: str = Field(
+        default="256M",
+        description="Web container memory reservation",
+        env="WEB_MEMORY_RESERVATION"
+    )
+
+    WORKER_CPU_LIMIT: str = Field(
+        default="2.0",
+        description="Worker container CPU limit",
+        env="WORKER_CPU_LIMIT"
+    )
+
+    WORKER_MEMORY_LIMIT: str = Field(
+        default="1G",
+        description="Worker container memory limit",
+        env="WORKER_MEMORY_LIMIT"
+    )
+
+    WORKER_CPU_RESERVATION: str = Field(
+        default="0.5",
+        description="Worker container CPU reservation",
+        env="WORKER_CPU_RESERVATION"
+    )
+
+    WORKER_MEMORY_RESERVATION: str = Field(
+        default="512M",
+        description="Worker container memory reservation",
+        env="WORKER_MEMORY_RESERVATION"
+    )
+
+    POSTGRES_CPU_LIMIT: str = Field(
+        default="2.0",
+        description="PostgreSQL container CPU limit",
+        env="POSTGRES_CPU_LIMIT"
+    )
+
+    POSTGRES_MEMORY_LIMIT: str = Field(
+        default="2G",
+        description="PostgreSQL container memory limit",
+        env="POSTGRES_MEMORY_LIMIT"
+    )
+
+    POSTGRES_CPU_RESERVATION: str = Field(
+        default="0.5",
+        description="PostgreSQL container CPU reservation",
+        env="POSTGRES_CPU_RESERVATION"
+    )
+
+    POSTGRES_MEMORY_RESERVATION: str = Field(
+        default="1G",
+        description="PostgreSQL container memory reservation",
+        env="POSTGRES_MEMORY_RESERVATION"
+    )
+
+    REDIS_CPU_LIMIT: str = Field(
+        default="1.0",
+        description="Redis container CPU limit",
+        env="REDIS_CPU_LIMIT"
+    )
+
+    REDIS_MEMORY_LIMIT: str = Field(
+        default="512M",
+        description="Redis container memory limit",
+        env="REDIS_MEMORY_LIMIT"
+    )
+
+    REDIS_CPU_RESERVATION: str = Field(
+        default="0.2",
+        description="Redis container CPU reservation",
+        env="REDIS_CPU_RESERVATION"
+    )
+
+    REDIS_MEMORY_RESERVATION: str = Field(
+        default="256M",
+        description="Redis container memory reservation",
+        env="REDIS_MEMORY_RESERVATION"
+    )
+
+    # Development Settings
+    DEV_RELOAD: bool = Field(
+        default=True,
+        description="Enable auto-reload in development",
+        env="DEV_RELOAD"
+    )
+
+    DEV_DEBUG: bool = Field(
+        default=True,
+        description="Enable debug mode in development",
+        env="DEV_DEBUG"
+    )
+
+    DEV_CORS_ORIGINS: str = Field(
+        default='["http://localhost:3000", "http://localhost:8080"]',
+        description="CORS origins for development",
+        env="DEV_CORS_ORIGINS"
+    )
+
+    # Production Settings
+    PROD_ALLOWED_HOSTS: str = Field(
+        default='["your-domain.com", "www.your-domain.com"]',
+        description="Allowed hosts for production",
+        env="PROD_ALLOWED_HOSTS"
+    )
+
+    PROD_CORS_ORIGINS: str = Field(
+        default='["https://your-domain.com"]',
+        description="CORS origins for production",
+        env="PROD_CORS_ORIGINS"
+    )
+
+    PROD_SECURE_SSL_REDIRECT: bool = Field(
+        default=True,
+        description="Force SSL redirect in production",
+        env="PROD_SECURE_SSL_REDIRECT"
+    )
+
+    PROD_SESSION_COOKIE_SECURE: bool = Field(
+        default=True,
+        description="Secure session cookies in production",
+        env="PROD_SESSION_COOKIE_SECURE"
+    )
+
+    PROD_CSRF_COOKIE_SECURE: bool = Field(
+        default=True,
+        description="Secure CSRF cookies in production",
+        env="PROD_CSRF_COOKIE_SECURE"
+    )
+
+    # Logging Configuration
+    LOG_FORMAT: str = Field(
+        default="json",
+        description="Log format (json/text)",
+        env="LOG_FORMAT"
+    )
+
+    LOG_FILE_PATH: str = Field(
+        default="./logs/app.log",
+        description="Log file path",
+        env="LOG_FILE_PATH"
+    )
+
+    LOG_MAX_FILE_SIZE: str = Field(
+        default="50MB",
+        description="Maximum log file size",
+        env="LOG_MAX_FILE_SIZE"
+    )
+
+    LOG_BACKUP_COUNT: int = Field(
+        default=10,
+        description="Number of log backup files",
+        env="LOG_BACKUP_COUNT"
+    )
+
+    LOG_ROTATION_INTERVAL: str = Field(
+        default="daily",
+        description="Log rotation interval",
+        env="LOG_ROTATION_INTERVAL"
+    )
+
+    DATABASE_LOG_LEVEL: str = Field(
+        default="WARNING",
+        description="Database component log level",
+        env="DATABASE_LOG_LEVEL"
+    )
+
+    CELERY_LOG_LEVEL: str = Field(
+        default="INFO",
+        description="Celery component log level",
+        env="CELERY_LOG_LEVEL"
+    )
+
+    CRAWLER_LOG_LEVEL: str = Field(
+        default="INFO",
+        description="Crawler component log level",
+        env="CRAWLER_LOG_LEVEL"
+    )
+
+    API_LOG_LEVEL: str = Field(
+        default="INFO",
+        description="API component log level",
+        env="API_LOG_LEVEL"
+    )
+
+    # Backup Configuration
+    BACKUP_ENABLED: bool = Field(
+        default=True,
+        description="Enable automated backups",
+        env="BACKUP_ENABLED"
+    )
+
+    BACKUP_SCHEDULE: str = Field(
+        default="0 2 * * *",
+        description="Backup schedule (cron format)",
+        env="BACKUP_SCHEDULE"
+    )
+
+    BACKUP_RETENTION_DAYS: int = Field(
+        default=30,
+        description="Backup retention period in days",
+        env="BACKUP_RETENTION_DAYS"
+    )
+
+    BACKUP_POSTGRES_PATH: str = Field(
+        default="./data/postgres_backup",
+        description="PostgreSQL backup directory",
+        env="BACKUP_POSTGRES_PATH"
+    )
+
+    BACKUP_REDIS_PATH: str = Field(
+        default="./data/redis_backup",
+        description="Redis backup directory",
+        env="BACKUP_REDIS_PATH"
+    )
+
+    # Email Alerting
+    SMTP_HOST: str = Field(
+        default="smtp.gmail.com",
+        description="SMTP server hostname",
+        env="SMTP_HOST"
+    )
+
+    SMTP_PORT: int = Field(
+        default=587,
+        description="SMTP server port",
+        env="SMTP_PORT"
+    )
+
+    SMTP_USE_TLS: bool = Field(
+        default=True,
+        description="Use TLS for SMTP connection",
+        env="SMTP_USE_TLS"
+    )
+
+    SMTP_USERNAME: str = Field(
+        default="alerts@your-domain.com",
+        description="SMTP authentication username",
+        env="SMTP_USERNAME"
+    )
+
+    SMTP_PASSWORD: str = Field(
+        default="your_email_password",
+        description="SMTP authentication password",
+        env="SMTP_PASSWORD"
+    )
+
+    ALERT_FROM_EMAIL: str = Field(
+        default="alerts@your-domain.com",
+        description="Alert sender email address",
+        env="ALERT_FROM_EMAIL"
+    )
+
+    ALERT_TO_EMAIL: str = Field(
+        default="admin@your-domain.com",
+        description="Alert recipient email address",
+        env="ALERT_TO_EMAIL"
+    )
+
+    # Webhook Alerting
+    WEBHOOK_URL: str = Field(
+        default="https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        description="Webhook URL for alerts",
+        env="WEBHOOK_URL"
+    )
+
+    WEBHOOK_ENABLED: bool = Field(
+        default=False,
+        description="Enable webhook alerts",
+        env="WEBHOOK_ENABLED"
+    )
+
+    # Performance Configuration
+    WEB_WORKER_CONNECTIONS: int = Field(
+        default=1000,
+        description="Maximum worker connections",
+        env="WEB_WORKER_CONNECTIONS"
+    )
+
+    WEB_WORKER_CLASS: str = Field(
+        default="uvicorn.workers.UvicornWorker",
+        description="Web worker class",
+        env="WEB_WORKER_CLASS"
+    )
+
+    CELERY_WORKER_CONCURRENCY: int = Field(
+        default=4,
+        description="Celery worker concurrency",
+        env="CELERY_WORKER_CONCURRENCY"
+    )
+
+    CELERY_WORKER_MAX_TASKS_PER_CHILD: int = Field(
+        default=1000,
+        description="Max tasks per Celery worker child",
+        env="CELERY_WORKER_MAX_TASKS_PER_CHILD"
+    )
+
+    CELERY_WORKER_DISABLE_RATE_LIMITS: bool = Field(
+        default=False,
+        description="Disable Celery worker rate limits",
+        env="CELERY_WORKER_DISABLE_RATE_LIMITS"
+    )
+
+    # Feature Flags
+    ENABLE_API_DOCS: bool = Field(
+        default=True,
+        description="Enable API documentation",
+        env="ENABLE_API_DOCS"
+    )
+
+    ENABLE_FLOWER_MONITORING: bool = Field(
+        default=True,
+        description="Enable Celery Flower monitoring",
+        env="ENABLE_FLOWER_MONITORING"
+    )
+
+    ENABLE_NGINX_PROXY: bool = Field(
+        default=True,
+        description="Enable Nginx reverse proxy",
+        env="ENABLE_NGINX_PROXY"
+    )
+
+    ENABLE_SSL_TERMINATION: bool = Field(
+        default=False,
+        description="Enable SSL termination",
+        env="ENABLE_SSL_TERMINATION"
+    )
+
+    ENABLE_LOG_AGGREGATION: bool = Field(
+        default=False,
+        description="Enable log aggregation",
+        env="ENABLE_LOG_AGGREGATION"
+    )
+
     @field_validator("WEB_WORKERS")
     @classmethod
     def validate_web_workers(cls, v: int) -> int:
@@ -359,7 +856,7 @@ class Settings(BaseSettings):
         if v > 16:
             raise ValueError("WEB_WORKERS must not exceed 16")
         return v
-    
+
     @field_validator("API_PORT")
     @classmethod
     def validate_api_port(cls, v: int) -> int:
@@ -367,11 +864,12 @@ class Settings(BaseSettings):
             raise ValueError("API_PORT must be between 1 and 65535")
         return v
 
-    model_config = {
-        "env_file": _get_env_file(),
-        "env_file_encoding": "utf-8",
-        "case_sensitive": True
-    }
+    model_config = ConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="allow"
+    )
 
 
 @lru_cache()

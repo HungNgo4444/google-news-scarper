@@ -18,7 +18,7 @@ Example:
     # Update job status
     await job_repo.update_status(
         job_id=job.id,
-        status="running",
+        status=CrawlJobStatus.RUNNING.value,
         started_at=datetime.utcnow()
     )
     
@@ -56,42 +56,68 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
         metadata: Optional[Dict[str, Any]] = None
     ) -> CrawlJob:
         """Create a new crawl job with initial pending status.
-        
+
         Args:
             category_id: UUID of the category to crawl
             priority: Job execution priority (higher = more priority)
             correlation_id: Optional correlation ID for tracking
             metadata: Optional additional metadata
-            
+
         Returns:
             Created CrawlJob instance
-            
+
         Raises:
             Exception: If job creation fails
         """
-        job_data = {
-            "category_id": category_id,
-            "status": CrawlJobStatus.PENDING,
-            "priority": priority,
-            "correlation_id": correlation_id,
-            "metadata": metadata or {}
-        }
-        
+        import json
+        from sqlalchemy import text
+
         async with get_db_session() as session:
             async with session.begin():
                 try:
-                    job = CrawlJob(**job_data)
-                    session.add(job)
-                    await session.flush()
-                    await session.refresh(job)
-                    
+                    # Use raw SQL to avoid enum issues
+                    raw_query = text("""
+                        INSERT INTO crawl_jobs (
+                            category_id, status, priority, correlation_id, job_metadata,
+                            articles_found, articles_saved, retry_count, created_at, updated_at
+                        )
+                        VALUES (
+                            :category_id, :status, :priority, :correlation_id, :metadata,
+                            0, 0, 0, NOW(), NOW()
+                        )
+                        RETURNING id, category_id, status, priority, correlation_id, job_metadata,
+                                  articles_found, articles_saved, retry_count, created_at, updated_at
+                    """)
+
+                    result = await session.execute(raw_query, {
+                        "category_id": str(category_id),
+                        "status": CrawlJobStatus.PENDING.value,
+                        "priority": priority,
+                        "correlation_id": correlation_id,
+                        "metadata": json.dumps(metadata or {})
+                    })
+
+                    row = result.fetchone()
+                    if not row:
+                        raise Exception("Failed to create job - no row returned")
+
+                    # Create job object manually
+                    job = CrawlJob()
+                    job_dict = dict(row._mapping)
+                    for key, value in job_dict.items():
+                        # Convert string status to enum
+                        if key == 'status' and isinstance(value, str):
+                            setattr(job, key, CrawlJobStatus(value))
+                        else:
+                            setattr(job, key, value)
+
                     logger.info(f"Created new crawl job", extra={
                         "job_id": str(job.id),
                         "category_id": str(category_id),
                         "priority": priority,
                         "correlation_id": correlation_id
                     })
-                    
+
                     return job
                 except Exception as e:
                     logger.error(f"Failed to create crawl job for category {category_id}: {e}")
@@ -100,7 +126,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
     async def update_status(
         self,
         job_id: UUID,
-        status: CrawlJobStatus,
+        status,  # Accept both enum and string
         started_at: Optional[datetime] = None,
         completed_at: Optional[datetime] = None,
         celery_task_id: Optional[str] = None,
@@ -111,10 +137,10 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
         correlation_id: Optional[str] = None
     ) -> bool:
         """Update job status and related metadata.
-        
+
         Args:
             job_id: UUID of the job to update
-            status: New job status
+            status: New job status (enum or string)
             started_at: When job execution started
             completed_at: When job finished (success or failure)
             celery_task_id: Celery task ID for tracking
@@ -123,52 +149,62 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
             error_message: Error details if job failed
             retry_count: Number of retry attempts
             correlation_id: Correlation ID for tracking
-            
+
         Returns:
             True if job was updated, False if not found
-            
+
         Raises:
             Exception: If update fails
         """
-        update_data = {
-            "status": status,
-            "updated_at": datetime.now(timezone.utc)
-        }
-        
-        # Add optional fields if provided
-        if started_at is not None:
-            update_data["started_at"] = started_at
-        if completed_at is not None:
-            update_data["completed_at"] = completed_at
-        if celery_task_id is not None:
-            update_data["celery_task_id"] = celery_task_id
-        if articles_found is not None:
-            update_data["articles_found"] = articles_found
-        if articles_saved is not None:
-            update_data["articles_saved"] = articles_saved
-        if error_message is not None:
-            update_data["error_message"] = error_message
-        if retry_count is not None:
-            update_data["retry_count"] = retry_count
-        if correlation_id is not None:
-            update_data["correlation_id"] = correlation_id
-        
+        from sqlalchemy import text
+
+        # Convert enum to string value if needed
+        status_value = status.value if hasattr(status, 'value') else status
+
         async with get_db_session() as session:
             async with session.begin():
                 try:
-                    query = (
-                        update(CrawlJob)
-                        .where(CrawlJob.id == job_id)
-                        .values(**update_data)
-                        .execution_options(synchronize_session="fetch")
-                    )
-                    
-                    result = await session.execute(query)
-                    
+                    # Build update query dynamically
+                    update_fields = ["status = :status", "updated_at = NOW()"]
+                    params = {"job_id": str(job_id), "status": status_value}
+
+                    if started_at is not None:
+                        update_fields.append("started_at = :started_at")
+                        params["started_at"] = started_at
+                    if completed_at is not None:
+                        update_fields.append("completed_at = :completed_at")
+                        params["completed_at"] = completed_at
+                    if celery_task_id is not None:
+                        update_fields.append("celery_task_id = :celery_task_id")
+                        params["celery_task_id"] = celery_task_id
+                    if articles_found is not None:
+                        update_fields.append("articles_found = :articles_found")
+                        params["articles_found"] = articles_found
+                    if articles_saved is not None:
+                        update_fields.append("articles_saved = :articles_saved")
+                        params["articles_saved"] = articles_saved
+                    if error_message is not None:
+                        update_fields.append("error_message = :error_message")
+                        params["error_message"] = error_message
+                    if retry_count is not None:
+                        update_fields.append("retry_count = :retry_count")
+                        params["retry_count"] = retry_count
+                    if correlation_id is not None:
+                        update_fields.append("correlation_id = :correlation_id")
+                        params["correlation_id"] = correlation_id
+
+                    raw_query = text(f"""
+                        UPDATE crawl_jobs
+                        SET {', '.join(update_fields)}
+                        WHERE id = (:job_id)::uuid
+                    """)
+
+                    result = await session.execute(raw_query, params)
+
                     if result.rowcount > 0:
                         logger.info(f"Updated job status", extra={
                             "job_id": str(job_id),
-                            "status": status.value,
+                            "status": status_value,
                             "articles_found": articles_found,
                             "articles_saved": articles_saved,
                             "correlation_id": correlation_id
@@ -177,37 +213,56 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                     else:
                         logger.warning(f"Job not found for status update", extra={
                             "job_id": str(job_id),
-                            "status": status.value
+                            "status": status_value
                         })
                         return False
-                        
+
                 except Exception as e:
                     logger.error(f"Failed to update job status: {e}", extra={
                         "job_id": str(job_id),
-                        "status": status.value
+                        "status": status_value
                     })
                     raise
     
     async def get_active_jobs(self, limit: int = 100) -> List[CrawlJob]:
         """Get currently running or pending jobs.
-        
+
         Args:
             limit: Maximum number of jobs to return
-            
+
         Returns:
             List of active jobs ordered by priority (desc) then created_at (asc)
         """
         async with get_db_session() as session:
-            query = (
-                select(CrawlJob)
-                .options(joinedload(CrawlJob.category))
-                .where(CrawlJob.status.in_([CrawlJobStatus.PENDING, CrawlJobStatus.RUNNING]))
-                .order_by(desc(CrawlJob.priority), asc(CrawlJob.created_at))
-                .limit(limit)
-            )
-            
-            result = await session.execute(query)
-            return list(result.scalars().all())
+            # Use raw SQL to avoid enum issues temporarily
+            from sqlalchemy import text
+
+            raw_query = text("""
+                SELECT
+                    cj.id, cj.category_id, cj.status, cj.celery_task_id,
+                    cj.started_at, cj.completed_at, cj.articles_found, cj.articles_saved,
+                    cj.error_message, cj.retry_count, cj.priority, cj.job_metadata,
+                    cj.correlation_id, cj.created_at, cj.updated_at
+                FROM crawl_jobs cj
+                WHERE cj.status IN ('pending', 'running')
+                ORDER BY cj.priority DESC, cj.created_at ASC
+                LIMIT :limit
+            """)
+
+            result = await session.execute(raw_query, {"limit": limit})
+            rows = result.fetchall()
+
+            # Convert rows to CrawlJob objects
+            jobs = []
+            for row in rows:
+                job_dict = dict(row._mapping)
+                # Create job without going through __init__ to avoid enum conversion
+                job = CrawlJob()
+                for key, value in job_dict.items():
+                    setattr(job, key, value)
+                jobs.append(job)
+
+            return jobs
     
     async def get_pending_jobs(self, limit: int = 50) -> List[CrawlJob]:
         """Get jobs that are pending execution.
@@ -222,7 +277,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
             query = (
                 select(CrawlJob)
                 .options(joinedload(CrawlJob.category))
-                .where(CrawlJob.status == CrawlJobStatus.PENDING)
+                .where(CrawlJob.status == CrawlJobStatus.PENDING.value)
                 .order_by(desc(CrawlJob.priority), asc(CrawlJob.created_at))
                 .limit(limit)
             )
@@ -243,7 +298,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
             query = (
                 select(CrawlJob)
                 .options(joinedload(CrawlJob.category))
-                .where(CrawlJob.status == CrawlJobStatus.RUNNING)
+                .where(CrawlJob.status == CrawlJobStatus.RUNNING.value)
                 .order_by(asc(CrawlJob.started_at))
                 .limit(limit)
             )
@@ -269,7 +324,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
             query = (
                 select(CrawlJob)
                 .options(joinedload(CrawlJob.category))
-                .where(CrawlJob.status == CrawlJobStatus.FAILED)
+                .where(CrawlJob.status == CrawlJobStatus.FAILED.value)
             )
             
             if since:
@@ -300,7 +355,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
             query = (
                 select(CrawlJob)
                 .options(joinedload(CrawlJob.category))
-                .where(CrawlJob.status == CrawlJobStatus.COMPLETED)
+                .where(CrawlJob.status == CrawlJobStatus.COMPLETED.value)
             )
             
             if category_id:
@@ -371,7 +426,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                 status_counts[status.value] = result.scalar() or 0
             
             # Get total articles metrics for completed jobs
-            completed_query = base_query.where(CrawlJob.status == CrawlJobStatus.COMPLETED)
+            completed_query = base_query.where(CrawlJob.status == CrawlJobStatus.COMPLETED.value)
             
             total_articles_query = select(
                 func.sum(CrawlJob.articles_found),
@@ -469,7 +524,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                 .options(joinedload(CrawlJob.category))
                 .where(
                     and_(
-                        CrawlJob.status == CrawlJobStatus.RUNNING,
+                        CrawlJob.status == CrawlJobStatus.RUNNING.value,
                         CrawlJob.started_at < cutoff_time
                     )
                 )
@@ -505,7 +560,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
             async with session.begin():
                 try:
                     update_data = {
-                        "status": CrawlJobStatus.PENDING,
+                        "status": CrawlJobStatus.PENDING.value,
                         "started_at": None,
                         "celery_task_id": None,
                         "error_message": f"Reset due to being stuck for over {stuck_threshold_hours} hours",
@@ -517,7 +572,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                         update(CrawlJob)
                         .where(
                             and_(
-                                CrawlJob.status == CrawlJobStatus.RUNNING,
+                                CrawlJob.status == CrawlJobStatus.RUNNING.value,
                                 CrawlJob.started_at < cutoff_time
                             )
                         )

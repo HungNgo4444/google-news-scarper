@@ -1,7 +1,7 @@
 """add crawl jobs table
 
 Revision ID: 004_add_crawl_jobs
-Revises: 003_enhanced_category_management
+Revises: 
 Create Date: 2025-09-12 00:00:00.000000
 
 """
@@ -12,13 +12,31 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '004_add_crawl_jobs'
-down_revision: Union[str, None] = '003_enhanced_category_management'
+down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add crawl_jobs table and related indexes."""
+    """Add categories and crawl_jobs tables with related indexes."""
+    # First create categories table if it doesn't exist
+    op.create_table('categories',
+        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text('gen_random_uuid()')),
+        sa.Column('name', sa.String(length=255), nullable=False),
+        sa.Column('keywords', postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default='[]'),
+        sa.Column('is_active', sa.Boolean(), nullable=False, server_default='true'),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
+        sa.PrimaryKeyConstraint('id'),
+        sa.UniqueConstraint('name'),
+        if_not_exists=True
+    )
+    
+    # Create indexes for categories table
+    op.create_index('idx_categories_name', 'categories', ['name'], if_not_exists=True)
+    op.create_index('idx_categories_is_active', 'categories', ['is_active'], if_not_exists=True)
+    op.create_index('idx_categories_keywords_gin', 'categories', ['keywords'], postgresql_using='gin', if_not_exists=True)
+    
     # Create crawl job status enum
     crawl_job_status_enum = sa.Enum(
         'pending',
@@ -42,7 +60,7 @@ def upgrade() -> None:
         sa.Column('error_message', sa.Text(), nullable=True),
         sa.Column('retry_count', sa.Integer(), nullable=False, server_default='0'),
         sa.Column('priority', sa.Integer(), nullable=False, server_default='0'),
-        sa.Column('metadata', postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default='{}'),
+        sa.Column('job_metadata', postgresql.JSONB(astext_type=sa.Text()), nullable=True, server_default='{}'),
         sa.Column('correlation_id', sa.String(length=255), nullable=True),
         sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
         sa.Column('updated_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('now()')),
@@ -82,17 +100,17 @@ def upgrade() -> None:
     op.create_index('idx_crawl_jobs_status_created_at', 'crawl_jobs', ['status', 'created_at'])
     op.create_index('idx_crawl_jobs_completed_at_status', 'crawl_jobs', ['completed_at', 'status'])
     
-    # Create GIN index for metadata JSONB column
-    op.create_index('idx_crawl_jobs_metadata_gin', 'crawl_jobs', ['metadata'], postgresql_using='gin')
+    # Create GIN index for job_metadata JSONB column
+    op.create_index('idx_crawl_jobs_job_metadata_gin', 'crawl_jobs', ['job_metadata'], postgresql_using='gin')
     
     # Create unique constraint on celery_task_id (allow NULL values)
     op.create_unique_constraint('uq_crawl_jobs_celery_task_id', 'crawl_jobs', ['celery_task_id'])
 
 
 def downgrade() -> None:
-    """Remove crawl_jobs table and related objects."""
-    # Drop indexes first
-    op.drop_index('idx_crawl_jobs_metadata_gin', table_name='crawl_jobs')
+    """Remove crawl_jobs and categories tables with related objects."""
+    # Drop crawl_jobs indexes first
+    op.drop_index('idx_crawl_jobs_job_metadata_gin', table_name='crawl_jobs')
     op.drop_index('idx_crawl_jobs_completed_at_status', table_name='crawl_jobs')
     op.drop_index('idx_crawl_jobs_status_created_at', table_name='crawl_jobs')
     op.drop_index('idx_crawl_jobs_status_priority', table_name='crawl_jobs')
@@ -105,11 +123,19 @@ def downgrade() -> None:
     op.drop_index('idx_crawl_jobs_status', table_name='crawl_jobs')
     op.drop_index('idx_crawl_jobs_category_id', table_name='crawl_jobs')
     
-    # Drop unique constraint
+    # Drop crawl_jobs unique constraint
     op.drop_constraint('uq_crawl_jobs_celery_task_id', 'crawl_jobs', type_='unique')
     
-    # Drop table
+    # Drop crawl_jobs table
     op.drop_table('crawl_jobs')
     
-    # Drop enum type
+    # Drop crawl job status enum type
     op.execute("DROP TYPE IF EXISTS crawljobstatus")
+    
+    # Drop categories indexes
+    op.drop_index('idx_categories_keywords_gin', table_name='categories')
+    op.drop_index('idx_categories_is_active', table_name='categories')
+    op.drop_index('idx_categories_name', table_name='categories')
+    
+    # Drop categories table
+    op.drop_table('categories')

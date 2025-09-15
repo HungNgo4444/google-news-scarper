@@ -1,47 +1,27 @@
 # Tech Stack
 
-Đây là bảng tech stack CHÍNH THỨC cho toàn bộ project. Tất cả development phải sử dụng chính xác các versions này.
-
 ## Technology Stack Table
 
 | Category | Technology | Version | Purpose | Rationale |
 |----------|------------|---------|---------|-----------|
-| Backend Language | Python | 3.11+ | Core application logic | Tương thích với newspaper4k-master, mature ecosystem |
-| Backend Framework | FastAPI | 0.104+ | Optional API endpoints | Modern, fast, type hints support |
-| Database | PostgreSQL | 15+ | Primary data storage | Robust, excellent JSON support, scalable |
-| Cache/Queue | Redis | 7.2+ | Job queue & caching | Fast, reliable for Celery backend |
-| Job Scheduler | Celery | 5.3+ | Background job processing | Mature, scalable, good monitoring |
-| Web Crawling | newspaper4k-master | existing | Article extraction & Google News | Already available, proven functionality |
-| HTTP Client | requests | 2.31+ | Additional HTTP calls | Standard Python library |
-| Database ORM | SQLAlchemy | 2.0+ | Database operations | Type-safe, mature, async support |
-| Migration Tool | Alembic | 1.12+ | Database migrations | Integrated với SQLAlchemy |
-| Configuration | Pydantic Settings | 2.0+ | Config management | Type validation, environment support |
-| Logging | structlog | 23.1+ | Structured logging | Better than standard logging |
-| Testing Framework | pytest | 7.4+ | Unit & integration tests | Most popular Python testing |
-| HTTP Testing | httpx | 0.25+ | API testing | Async support, modern |
-| Containerization | Docker | 24+ | Development environment | Consistent environments |
-| Container Orchestration | Docker Compose | 2.21+ | Multi-container setup | Local development orchestration |
-| Process Manager | Supervisor | 4.2+ | Production process management | Reliable process monitoring |
-| Reverse Proxy | Nginx | 1.25+ | Production deployment | Standard web server |
-
-## Key Technology Decisions
-
-### Python 3.11+
-- **Rationale:** Tương thích newspaper4k-master, performance improvements, modern async features
-- **Purpose:** Core application language for all business logic
-
-### PostgreSQL 15+  
-- **Rationale:** JSON support tốt cho flexible article storage, proven scalability, ACID compliance
-- **Purpose:** Primary data storage for articles, categories, và crawl jobs
-
-### Celery + Redis
-- **Rationale:** Battle-tested combo cho background processing, mature monitoring tools
-- **Purpose:** Asynchronous job queue for scheduled crawling tasks
-
-### FastAPI (Optional)
-- **Rationale:** Modern framework với automatic OpenAPI docs, type safety
-- **Purpose:** Optional admin interface cho category management
-
-### Docker
-- **Rationale:** Consistent development environment, easy VPS deployment, service isolation
-- **Purpose:** Containerization cho all services và dependencies
+| Frontend Language | TypeScript | 5.x | Type-safe frontend development | Better development experience and fewer runtime errors |
+| Frontend Framework | React | 18.x | UI component framework | Industry standard with excellent ecosystem |
+| UI Component Library | Shadcn UI + TailwindCSS | Latest | Styled component system | Consistent design system with utility-first CSS |
+| State Management | React Context + useState | Built-in | Client-side state management | Simple solution adequate for admin interface complexity |
+| Backend Language | Python | 3.11 | Server-side development | Existing codebase language, excellent for data processing |
+| Backend Framework | FastAPI | 0.104+ | REST API framework | Already implemented, provides automatic documentation |
+| API Style | REST | OpenAPI 3.0 | HTTP-based API communication | Existing implementation with comprehensive endpoints |
+| Database | PostgreSQL | 15 | Primary data storage | Already configured with proper schema and migrations |
+| Cache | Redis | 7 | Caching and message broker | Existing implementation for Celery and performance |
+| File Storage | Local filesystem | N/A | Article content storage | Current implementation, no external storage needed yet |
+| Authentication | FastAPI Security | Built-in | API authentication (future) | Existing framework capability for future auth implementation |
+| Frontend Testing | Vitest + Testing Library | Latest | Component and unit testing | Modern, fast testing framework for React applications |
+| Backend Testing | Pytest | 7.x+ | API and service testing | Existing testing framework already in use |
+| E2E Testing | Playwright | Latest | End-to-end testing | Modern, reliable E2E testing across browsers |
+| Build Tool | Vite | Latest | Frontend build system | Fast development server and optimized production builds |
+| Bundler | Vite (built-in) | Latest | Module bundling | Integrated with Vite, modern ES modules support |
+| IaC Tool | Docker Compose | 3.8+ | Container orchestration | Already configured and proven for development/production |
+| CI/CD | GitHub Actions | Latest | Automated build and deployment | Industry standard with excellent Docker integration |
+| Monitoring | Docker logs + Flower | Current | Application monitoring | Leverage existing Celery monitoring, expand as needed |
+| Logging | Python logging + Console | Built-in | Application logging | Extend existing backend logging to frontend |
+| CSS Framework | TailwindCSS | 3.x | Utility-first styling | Excellent developer experience and design consistency |

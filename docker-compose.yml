@@ -1,6 +1,5 @@
 # Docker Compose configuration for Google News Scraper - Development Environment
 # Multi-service architecture with PostgreSQL, Redis, and Celery
-version: '3.8'
 
 services:
   # Database migration service (runs once)
@@ -22,6 +21,28 @@ services:
     networks:
       - app-network
 
+  # React Frontend Application
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_BASE_URL=http://web:8000
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - app-network
+
   # FastAPI Web Application
   web:
     build:
@@ -36,6 +57,7 @@ services:
       - ENVIRONMENT=development
       - LOG_LEVEL=DEBUG
       - DATABASE_ECHO=false
+      - CORS_ORIGINS=http://localhost:3000,http://frontend:3000
     volumes:
       - ./src:/app/src:ro
       - ./logs:/app/logs

@@ -1,134 +1,96 @@
 # Data Models
 
-Định nghĩa các core data models dựa trên PRD requirements, sẽ được share giữa database schema và application logic.
+## Category Model
 
-## Article
-
-**Purpose:** Lưu trữ thông tin bài báo đã crawl từ Google News, bao gồm metadata và content được extract bởi newspaper4k-master
+**Purpose:** Represents news categories used for targeted crawling with associated keywords for content filtering.
 
 **Key Attributes:**
-- id: UUID - Primary key duy nhất
-- title: str - Tiêu đề bài báo
-- content: text - Nội dung chính được extract
-- author: str - Tác giả (có thể null)  
-- publish_date: datetime - Ngày đăng bài
-- source_url: str - URL gốc của bài báo
-- image_url: str - URL hình ảnh đại diện (có thể null)
-- created_at: datetime - Thời điểm crawl
-- updated_at: datetime - Lần update cuối
+- id: UUID - Unique identifier for each category
+- name: string - Human-readable category name (unique)
+- keywords: string[] - Search terms to include in crawling
+- exclude_keywords: string[] - Terms to exclude from results
+- is_active: boolean - Whether category is enabled for crawling
+- created_at: datetime - Category creation timestamp
+- updated_at: datetime - Last modification timestamp
 
 ### TypeScript Interface
-```typescript
-interface Article {
-  id: string;
-  title: string;
-  content: string;
-  author?: string;
-  publish_date: Date;
-  source_url: string;
-  image_url?: string;
-  created_at: Date;
-  updated_at: Date;
-}
-```
 
-### Relationships
-- Many-to-many với Category qua ArticleCategory junction table
-
-## Category
-
-**Purpose:** Quản lý categories để organize crawling targets, mỗi category có danh sách keywords với logic OR
-
-**Key Attributes:**
-- id: UUID - Primary key
-- name: str - Tên category (unique)
-- keywords: list[str] - Danh sách keywords cho OR search
-- exclude_keywords: list[str] - Keywords cần exclude (optional)
-- is_active: bool - Enable/disable category
-- created_at: datetime - Thời điểm tạo
-- updated_at: datetime - Lần update cuối
-
-### TypeScript Interface  
 ```typescript
 interface Category {
   id: string;
   name: string;
   keywords: string[];
-  exclude_keywords?: string[];
+  exclude_keywords: string[];
   is_active: boolean;
-  created_at: Date;
-  updated_at: Date;
+  created_at: string;
+  updated_at: string;
 }
 ```
 
 ### Relationships
-- Many-to-many với Article qua ArticleCategory junction table
-- One-to-many với CrawlJob
+- One-to-Many with Article (one category can have many articles)
+- Many-to-Many with CrawlJob (categories can be associated with multiple jobs)
 
-## ArticleCategory
+## Article Model
 
-**Purpose:** Junction table cho many-to-many relationship giữa articles và categories
+**Purpose:** Stores crawled news articles with full content, metadata, and source information.
 
 **Key Attributes:**
-- article_id: UUID - Foreign key to Article
-- category_id: UUID - Foreign key to Category
-- relevance_score: float - Optional relevance score (0.0-1.0)
-- created_at: datetime - Thời điểm associate
+- id: UUID - Unique article identifier
+- title: string - Article headline
+- content: text - Full article content
+- url: string - Source article URL (unique)
+- published_at: datetime - Original publication date
+- crawled_at: datetime - When article was scraped
+- source: string - News source/publisher name
+- category_id: UUID - Associated category reference
 
 ### TypeScript Interface
+
 ```typescript
-interface ArticleCategory {
-  article_id: string;
+interface Article {
+  id: string;
+  title: string;
+  content: string;
+  url: string;
+  published_at: string;
+  crawled_at: string;
+  source: string;
   category_id: string;
-  relevance_score?: number;
-  created_at: Date;
 }
 ```
 
-## CrawlJob
+### Relationships
+- Many-to-One with Category (articles belong to one category)
+- One-to-Many with CrawlJobResult (articles can be results of multiple crawl attempts)
 
-**Purpose:** Track scheduled crawling jobs và their status để monitoring và retry logic
+## CrawlJob Model
+
+**Purpose:** Tracks crawling job execution, status, and results for monitoring and debugging purposes.
 
 **Key Attributes:**
-- id: UUID - Primary key
-- category_id: UUID - Category được crawl
-- status: enum - (pending, running, completed, failed)
-- started_at: datetime - Thời điểm start (nullable)
-- completed_at: datetime - Thời điểm complete (nullable)
-- articles_found: int - Số articles tìm được
-- error_message: str - Error details nếu failed (nullable)
-- retry_count: int - Số lần retry
-- created_at: datetime - Thời điểm tạo job
+- id: UUID - Unique job identifier
+- category_id: UUID - Target category for crawling
+- status: enum - Job status (pending, running, completed, failed)
+- started_at: datetime - Job start time
+- completed_at: datetime - Job completion time (nullable)
+- articles_found: integer - Number of articles discovered
+- error_message: string - Error details if job failed (nullable)
 
 ### TypeScript Interface
-```typescript
-enum CrawlJobStatus {
-  PENDING = 'pending',
-  RUNNING = 'running', 
-  COMPLETED = 'completed',
-  FAILED = 'failed'
-}
 
+```typescript
 interface CrawlJob {
   id: string;
   category_id: string;
-  status: CrawlJobStatus;
-  started_at?: Date;
-  completed_at?: Date;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  started_at: string;
+  completed_at: string | null;
   articles_found: number;
-  error_message?: string;
-  retry_count: number;
-  created_at: Date;
+  error_message: string | null;
 }
 ```
 
 ### Relationships
-- Many-to-one với Category
-
-## Design Decisions
-
-- **UUID primary keys:** Tránh collision và better cho distributed systems
-- **JSON arrays cho keywords:** PostgreSQL JSON support tốt, flexible hơn separate table
-- **Junction table explicit:** Cho phép thêm metadata như relevance score
-- **CrawlJob tracking:** Essential cho monitoring và debugging scheduled jobs
-- **Timestamps everywhere:** Audit trail và debugging
+- Many-to-One with Category (jobs target specific categories)
+- One-to-Many with Article (jobs can discover multiple articles)

@@ -39,6 +39,7 @@ from src.core.scheduler.celery_app import celery_app
 from src.database.repositories.job_repo import CrawlJobRepository
 from src.database.repositories.category_repo import CategoryRepository
 from src.database.repositories.article_repo import ArticleRepository
+from src.database.models.crawl_job import CrawlJobStatus
 from src.core.crawler.engine import CrawlerEngine
 from src.core.crawler.extractor import ArticleExtractor
 from src.shared.config import get_settings
@@ -87,9 +88,14 @@ def crawl_category_task(self, category_id: str, job_id: str) -> Dict[str, Any]:
     })
     
     # Convert to async and run the crawl operation
-    return asyncio.run(_async_crawl_category_task(
-        self, category_id, job_id, correlation_id, settings
-    ))
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_async_crawl_category_task(
+            self, category_id, job_id, correlation_id, settings
+        ))
+    finally:
+        loop.close()
 
 
 async def _async_crawl_category_task(
@@ -117,7 +123,7 @@ async def _async_crawl_category_task(
         # Update job status to running
         await job_repo.update_status(
             job_id=UUID(job_id),
-            status="running",
+            status=CrawlJobStatus.RUNNING,
             started_at=datetime.now(timezone.utc),
             celery_task_id=task_instance.request.id,
             correlation_id=correlation_id
@@ -145,7 +151,7 @@ async def _async_crawl_category_task(
             
             await job_repo.update_status(
                 job_id=UUID(job_id),
-                status="completed",  # Not an error, just skipped
+                status=CrawlJobStatus.COMPLETED,  # Not an error, just skipped
                 error_message=error_msg,
                 completed_at=datetime.now(timezone.utc),
                 articles_found=0,
@@ -179,7 +185,7 @@ async def _async_crawl_category_task(
         # Update completion status
         await job_repo.update_status(
             job_id=UUID(job_id),
-            status="completed",
+            status=CrawlJobStatus.COMPLETED,
             articles_found=articles_found,
             articles_saved=articles_saved,
             completed_at=datetime.now(timezone.utc)
@@ -376,10 +382,9 @@ async def _handle_task_error(
     try:
         await job_repo.update_status(
             job_id=job_id,
-            status="failed",
+            status=CrawlJobStatus.FAILED,
             error_message=error_msg,
-            completed_at=datetime.now(timezone.utc),
-            error_details=error_details
+            completed_at=datetime.now(timezone.utc)
         )
     except Exception as db_error:
         logger.error(f"Failed to update job status: {db_error}", extra={
@@ -522,7 +527,12 @@ def cleanup_old_jobs_task(self) -> Dict[str, Any]:
         "task_id": self.request.id
     })
     
-    return asyncio.run(_async_cleanup_old_jobs_task(self, correlation_id, settings))
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_async_cleanup_old_jobs_task(self, correlation_id, settings))
+    finally:
+        loop.close()
 
 
 async def _async_cleanup_old_jobs_task(
@@ -540,15 +550,47 @@ async def _async_cleanup_old_jobs_task(
     Returns:
         Cleanup results
     """
+    from src.database.connection import get_database_connection
+    
     try:
-        job_repo = CrawlJobRepository()
+        # Get database connection and create single session for all operations
+        db_connection = get_database_connection()
         cleanup_days = settings.JOB_CLEANUP_DAYS
         
-        # Clean up old jobs
-        cleaned_count = await job_repo.cleanup_old_jobs(days_old=cleanup_days)
-        
-        # Reset stuck jobs if any
-        stuck_count = await job_repo.reset_stuck_jobs(stuck_threshold_hours=2)
+        async with db_connection.get_session() as session:
+            # Manual cleanup operations using direct SQL
+            from sqlalchemy import delete, update, and_, or_
+            from src.database.models.crawl_job import CrawlJob, CrawlJobStatus
+            from datetime import datetime, timezone, timedelta
+            
+            # Clean up old jobs (completed/failed older than cleanup_days)
+            cleanup_threshold = datetime.now(timezone.utc) - timedelta(days=cleanup_days)
+            cleanup_query = delete(CrawlJob).where(
+                and_(
+                    CrawlJob.status.in_([CrawlJobStatus.COMPLETED, CrawlJobStatus.FAILED]),
+                    CrawlJob.created_at < cleanup_threshold
+                )
+            )
+            cleanup_result = await session.execute(cleanup_query)
+            cleaned_count = cleanup_result.rowcount
+            
+            # Reset stuck jobs (running for more than 2 hours)
+            stuck_threshold = datetime.now(timezone.utc) - timedelta(hours=2)
+            stuck_update_query = update(CrawlJob).where(
+                and_(
+                    CrawlJob.status == "running",
+                    CrawlJob.started_at < stuck_threshold
+                )
+            ).values(
+                status=CrawlJobStatus.FAILED,
+                error_message="Job reset due to stuck status",
+                completed_at=datetime.now(timezone.utc)
+            )
+            stuck_result = await session.execute(stuck_update_query)
+            stuck_count = stuck_result.rowcount
+            
+            # Commit the changes
+            await session.commit()
         
         result = {
             "status": "completed",
@@ -605,7 +647,12 @@ def monitor_job_health_task(self) -> Dict[str, Any]:
         "task_id": self.request.id
     })
     
-    return asyncio.run(_async_monitor_job_health_task(self, correlation_id))
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_async_monitor_job_health_task(self, correlation_id))
+    finally:
+        loop.close()
 
 
 async def _async_monitor_job_health_task(
@@ -621,19 +668,58 @@ async def _async_monitor_job_health_task(
     Returns:
         Health monitoring results
     """
+    from src.database.connection import get_database_connection
+    
     try:
-        job_repo = CrawlJobRepository()
+        # Get database connection and create single session for all operations
+        db_connection = get_database_connection()
         
-        # Get active jobs counts
-        active_jobs = await job_repo.get_active_jobs(limit=1000)
-        running_jobs = await job_repo.get_running_jobs(limit=100)
-        
-        # Check for stuck jobs
-        stuck_jobs = await job_repo.get_stuck_jobs(stuck_threshold_hours=2)
-        
-        # Get recent statistics
-        from_date = datetime.now(timezone.utc) - timedelta(hours=24)
-        stats = await job_repo.get_job_statistics(from_date=from_date)
+        async with db_connection.get_session() as session:
+            # Create repository instances with manual session queries
+            from sqlalchemy import select, func, and_, or_, desc
+            from src.database.models.crawl_job import CrawlJob, CrawlJobStatus
+            from datetime import datetime, timezone, timedelta
+            
+            # Get active jobs counts
+            active_query = select(CrawlJob).where(
+                CrawlJob.status.in_(["pending", "running"])
+            ).limit(1000)
+            active_result = await session.execute(active_query)
+            active_jobs = active_result.scalars().all()
+            
+            # Get running jobs
+            running_query = select(CrawlJob).where(
+                CrawlJob.status == "running"
+            ).limit(100)
+            running_result = await session.execute(running_query)
+            running_jobs = running_result.scalars().all()
+            
+            # Check for stuck jobs (running for more than 2 hours)
+            stuck_threshold = datetime.now(timezone.utc) - timedelta(hours=2)
+            stuck_query = select(CrawlJob).where(
+                and_(
+                    CrawlJob.status == "running",
+                    CrawlJob.started_at < stuck_threshold
+                )
+            )
+            stuck_result = await session.execute(stuck_query)
+            stuck_jobs = stuck_result.scalars().all()
+            
+            # Get recent statistics
+            from_date = datetime.now(timezone.utc) - timedelta(hours=24)
+            stats_query = select(
+                CrawlJob.status,
+                func.count(CrawlJob.id).label('count')
+            ).where(
+                CrawlJob.created_at >= from_date
+            ).group_by(CrawlJob.status)
+            stats_result = await session.execute(stats_query)
+            stats_rows = stats_result.all()
+            
+            # Build stats dictionary
+            stats = {
+                "status_counts": {row.status.value: row.count for row in stats_rows}
+            }
         
         # Evaluate health status
         health_issues = []
@@ -732,9 +818,14 @@ def trigger_category_crawl_task(
         "task_id": self.request.id
     })
     
-    return asyncio.run(_async_trigger_category_crawl_task(
-        self, category_id, priority, metadata, correlation_id
-    ))
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(_async_trigger_category_crawl_task(
+            self, category_id, priority, metadata, correlation_id
+        ))
+    finally:
+        loop.close()
 
 
 async def _async_trigger_category_crawl_task(
