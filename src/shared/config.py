@@ -126,6 +126,31 @@ class Settings(BaseSettings):
         description="Only process successful HTTP responses in newspaper4k",
         env="NEWSPAPER_HTTP_SUCCESS_ONLY"
     )
+
+    # JavaScript rendering settings for sync_playwright integration
+    ENABLE_JAVASCRIPT_RENDERING: bool = Field(
+        default=True,
+        description="Enable JavaScript rendering using sync_playwright for articles that fail standard extraction",
+        env="ENABLE_JAVASCRIPT_RENDERING"
+    )
+
+    PLAYWRIGHT_HEADLESS: bool = Field(
+        default=True,
+        description="Run Playwright browser in headless mode",
+        env="PLAYWRIGHT_HEADLESS"
+    )
+
+    PLAYWRIGHT_TIMEOUT: int = Field(
+        default=30,
+        description="Timeout for Playwright page operations in seconds",
+        env="PLAYWRIGHT_TIMEOUT"
+    )
+
+    PLAYWRIGHT_WAIT_TIME: float = Field(
+        default=2.0,
+        description="Time to wait for JavaScript to render in seconds",
+        env="PLAYWRIGHT_WAIT_TIME"
+    )
     
     # Celery configuration
     CELERY_BROKER_URL: str = Field(
@@ -206,6 +231,39 @@ class Settings(BaseSettings):
         description="Number of days to keep completed jobs",
         env="JOB_CLEANUP_DAYS"
     )
+
+    # Concurrency settings
+    CRAWLER_CONCURRENCY_LIMIT: int = Field(
+        default=10,
+        description="Maximum concurrent extractions (increased from 5)",
+        env="CRAWLER_CONCURRENCY_LIMIT"
+    )
+
+    # CloudScraper settings
+    CLOUDSCRAPER_ENABLED: bool = Field(
+        default=True,
+        description="Enable CloudScraper for anti-bot protection",
+        env="CLOUDSCRAPER_ENABLED"
+    )
+
+    CLOUDSCRAPER_DELAY: float = Field(
+        default=1.0,
+        description="Delay between CloudScraper requests in seconds",
+        env="CLOUDSCRAPER_DELAY"
+    )
+
+    # Event loop settings
+    CELERY_ASYNC_TIMEOUT: int = Field(
+        default=300,
+        description="Timeout for async operations in Celery tasks",
+        env="CELERY_ASYNC_TIMEOUT"
+    )
+
+    ARTICLE_EXTRACTION_BATCH_SIZE: int = Field(
+        default=10,
+        description="Batch size for article extraction",
+        env="ARTICLE_EXTRACTION_BATCH_SIZE"
+    )
     
     @field_validator("DATABASE_URL")
     @classmethod
@@ -269,6 +327,24 @@ class Settings(BaseSettings):
         if v.lower() not in valid_languages:
             raise ValueError(f"NEWSPAPER_LANGUAGE must be one of {valid_languages}")
         return v.lower()
+
+    @field_validator("PLAYWRIGHT_TIMEOUT")
+    @classmethod
+    def validate_playwright_timeout(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("PLAYWRIGHT_TIMEOUT must be positive")
+        if v > 120:  # 2 minutes max
+            raise ValueError("PLAYWRIGHT_TIMEOUT must not exceed 120 seconds")
+        return v
+
+    @field_validator("PLAYWRIGHT_WAIT_TIME")
+    @classmethod
+    def validate_playwright_wait_time(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("PLAYWRIGHT_WAIT_TIME must be positive")
+        if v > 10.0:  # 10 seconds max
+            raise ValueError("PLAYWRIGHT_WAIT_TIME must not exceed 10 seconds")
+        return v
     
     @field_validator("CELERY_BROKER_URL", "CELERY_RESULT_BACKEND")
     @classmethod

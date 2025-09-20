@@ -33,6 +33,7 @@ from src.database.connection import get_database_connection, close_database_conn
 from src.shared.health import get_health_checker
 from src.api.routes.categories import router as categories_router
 from src.api.routes.jobs import router as jobs_router
+from src.api.routes.articles import router as articles_router
 
 # Configure structured logging
 structlog.configure(
@@ -398,7 +399,7 @@ app.include_router(categories_router)
 app.include_router(jobs_router)
 
 # Additional routers would be included here when available
-# app.include_router(articles_router)
+app.include_router(articles_router)
 
 
 if __name__ == "__main__":

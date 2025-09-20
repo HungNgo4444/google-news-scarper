@@ -13,7 +13,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from decimal import Decimal
 
 # Test imports
@@ -572,6 +572,264 @@ class TestArticleRepositoryIntegration:
         assert mock_crawler_result["articles_saved"] == 4
         assert mock_crawler_result["duplicates_skipped"] == 1
         assert mock_crawler_result["categories_associated"] == 8
+
+
+@pytest.mark.asyncio
+class TestArticleRepositoryEnhanced:
+    """Tests for enhanced article repository functionality (Story 2.1)."""
+
+    @pytest.fixture
+    async def article_repo(self):
+        """Create ArticleRepository instance for testing."""
+        return ArticleRepository()
+
+    @pytest.fixture
+    def sample_job_id(self):
+        """Sample job ID for testing."""
+        return uuid.uuid4()
+
+    @pytest.fixture
+    def sample_articles_with_job(self, sample_job_id):
+        """Create sample articles with job associations."""
+        articles = []
+        for i in range(10):
+            article = Mock()
+            article.id = uuid.uuid4()
+            article.title = f"Test Article {i+1}"
+            article.content = f"This is test content for article {i+1}"
+            article.source_url = f"https://example.com/article{i+1}"
+            article.crawl_job_id = sample_job_id if i < 5 else None
+            article.keywords_matched = ['python', 'ai'] if i % 2 == 0 else ['javascript']
+            article.relevance_score = 0.8 if i < 3 else 0.5
+            article.publish_date = datetime.now(timezone.utc)
+            article.created_at = datetime.now(timezone.utc)
+            article.updated_at = datetime.now(timezone.utc)
+            articles.append(article)
+        return articles
+
+    async def test_get_articles_paginated_with_job_filter(self, article_repo, sample_articles_with_job, sample_job_id):
+        """Test paginated article retrieval with job ID filter."""
+        with patch('src.database.repositories.article_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock count query result
+            count_result = Mock()
+            count_result.scalar.return_value = 5
+
+            # Mock articles query result
+            articles_result = Mock()
+            articles_result.scalars.return_value.all.return_value = sample_articles_with_job[:5]
+
+            # Mock execute to return different results for count vs select
+            mock_session.execute.side_effect = [count_result, articles_result]
+
+            # Test paginated retrieval with job filter
+            articles, total = await article_repo.get_articles_paginated(
+                filters={'job_id': sample_job_id},
+                page=1,
+                size=10
+            )
+
+            # Verify results
+            assert total == 5
+            assert len(articles) == 5
+            for article in articles:
+                assert article.crawl_job_id == sample_job_id
+
+    async def test_get_articles_paginated_with_search(self, article_repo, sample_articles_with_job):
+        """Test paginated article retrieval with search filter."""
+        with patch('src.database.repositories.article_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock count query result
+            count_result = Mock()
+            count_result.scalar.return_value = 3
+
+            # Mock articles query result
+            matching_articles = [a for a in sample_articles_with_job if 'python' in a.content or 'python' in a.title]
+            articles_result = Mock()
+            articles_result.scalars.return_value.all.return_value = matching_articles
+
+            mock_session.execute.side_effect = [count_result, articles_result]
+
+            # Test paginated retrieval with search
+            articles, total = await article_repo.get_articles_paginated(
+                filters={'search_query': 'python'},
+                page=1,
+                size=10
+            )
+
+            # Verify search functionality was called
+            assert mock_session.execute.call_count == 2
+
+    async def test_get_articles_paginated_with_keywords_filter(self, article_repo, sample_articles_with_job):
+        """Test paginated article retrieval with keywords filter."""
+        with patch('src.database.repositories.article_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock count query result
+            count_result = Mock()
+            count_result.scalar.return_value = 5
+
+            # Mock articles query result
+            articles_result = Mock()
+            articles_result.scalars.return_value.all.return_value = sample_articles_with_job[:5]
+
+            mock_session.execute.side_effect = [count_result, articles_result]
+
+            # Test paginated retrieval with keywords filter
+            articles, total = await article_repo.get_articles_paginated(
+                filters={'keywords': ['python', 'ai']},
+                page=1,
+                size=10
+            )
+
+            # Verify keywords filter was applied
+            assert mock_session.execute.call_count == 2
+
+    async def test_get_articles_paginated_with_relevance_filter(self, article_repo, sample_articles_with_job):
+        """Test paginated article retrieval with minimum relevance score filter."""
+        with patch('src.database.repositories.article_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock count query result
+            count_result = Mock()
+            count_result.scalar.return_value = 3
+
+            # High relevance articles
+            high_relevance_articles = [a for a in sample_articles_with_job if a.relevance_score >= 0.7]
+            articles_result = Mock()
+            articles_result.scalars.return_value.all.return_value = high_relevance_articles
+
+            mock_session.execute.side_effect = [count_result, articles_result]
+
+            # Test paginated retrieval with relevance filter
+            articles, total = await article_repo.get_articles_paginated(
+                filters={'min_relevance_score': 0.7},
+                page=1,
+                size=10
+            )
+
+            # Verify filtering logic was invoked
+            assert mock_session.execute.call_count == 2
+
+    async def test_get_article_statistics(self, article_repo):
+        """Test article statistics calculation."""
+        with patch('src.database.repositories.article_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock different query results for statistics
+            total_result = Mock()
+            total_result.scalar.return_value = 100
+
+            job_stats_result = Mock()
+            job_stats_result.__iter__ = Mock(return_value=iter([
+                (uuid.uuid4(), 25),
+                (uuid.uuid4(), 35),
+                (uuid.uuid4(), 40)
+            ]))
+
+            category_stats_result = Mock()
+            category_stats_result.__iter__ = Mock(return_value=iter([
+                (uuid.uuid4(), "Technology", 30),
+                (uuid.uuid4(), "Science", 45),
+                (uuid.uuid4(), "Business", 25)
+            ]))
+
+            recent_result = Mock()
+            recent_result.scalar.return_value = 15
+
+            avg_relevance_result = Mock()
+            avg_relevance_result.scalar.return_value = 0.75
+
+            # Mock execute to return different results for each query
+            mock_session.execute.side_effect = [
+                total_result,
+                job_stats_result,
+                category_stats_result,
+                recent_result,
+                avg_relevance_result
+            ]
+
+            # Test statistics calculation
+            stats = await article_repo.get_article_statistics()
+
+            # Verify statistics structure
+            assert 'total_articles' in stats
+            assert 'articles_by_job' in stats
+            assert 'articles_by_category' in stats
+            assert 'recent_articles_count' in stats
+            assert 'average_relevance_score' in stats
+
+            # Verify statistics were calculated
+            assert mock_session.execute.call_count == 5
+
+    async def test_get_articles_paginated_empty_results(self, article_repo):
+        """Test paginated article retrieval with no results."""
+        with patch('src.database.repositories.article_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock empty results
+            count_result = Mock()
+            count_result.scalar.return_value = 0
+
+            articles_result = Mock()
+            articles_result.scalars.return_value.all.return_value = []
+
+            mock_session.execute.side_effect = [count_result, articles_result]
+
+            # Test empty results
+            articles, total = await article_repo.get_articles_paginated(
+                filters={'job_id': uuid.uuid4()},
+                page=1,
+                size=10
+            )
+
+            # Verify empty results handling
+            assert total == 0
+            assert len(articles) == 0
+
+    async def test_get_articles_paginated_pagination(self, article_repo, sample_articles_with_job):
+        """Test pagination functionality."""
+        with patch('src.database.repositories.article_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            # Mock count query result
+            count_result = Mock()
+            count_result.scalar.return_value = 10
+
+            # Mock articles query result (page 2, size 3)
+            page2_articles = sample_articles_with_job[3:6]  # Articles 4-6
+            articles_result = Mock()
+            articles_result.scalars.return_value.all.return_value = page2_articles
+
+            mock_session.execute.side_effect = [count_result, articles_result]
+
+            # Test pagination (page 2, size 3)
+            articles, total = await article_repo.get_articles_paginated(
+                filters={},
+                page=2,
+                size=3
+            )
+
+            # Verify pagination was applied
+            assert total == 10
+            assert len(articles) == 3
+            assert mock_session.execute.call_count == 2
 
 
 if __name__ == "__main__":

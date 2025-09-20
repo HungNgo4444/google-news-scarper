@@ -34,6 +34,21 @@ class Category(BaseModel):
         default=True,
         index=True
     )
+
+    # Language and country settings for Google News search
+    language: Mapped[str] = mapped_column(
+        String(5),
+        nullable=False,
+        default="vi",  # Vietnamese by default
+        comment="Language code for Google News search (e.g., 'vi', 'en')"
+    )
+
+    country: Mapped[str] = mapped_column(
+        String(5),
+        nullable=False,
+        default="VN",  # Vietnam by default
+        comment="Country code for Google News search (e.g., 'VN', 'US')"
+    )
     
     # Relationships
     articles: Mapped[List["ArticleCategory"]] = relationship(

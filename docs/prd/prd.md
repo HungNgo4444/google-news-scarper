@@ -1,474 +1,647 @@
-# Google News Scraper Brownfield Enhancement PRD
+# Google News Scraper Web Interface Enhancement PRD v2.0
 
-## Intro Project Analysis and Context
+## Executive Summary
 
-### Existing Project Overview
+**Project Type**: Brownfield Enhancement - Web Interface Addition
+**Target Users**: Admin/Developer
+**Primary Goal**: Create a comprehensive web interface for Google News Scraper management with job-centric article viewing and integrated scheduling
 
-**Analysis Source**: IDE-based fresh analysis của Google News Scraper project
+### Current Project State Analysis
 
-**Current Project State**: 
-Dự án hiện tại là một **REST API backend system** với:
-- FastAPI framework
-- PostgreSQL database 
-- Redis cache/message broker
-- Celery task queue system
-- Docker containerized architecture
-- Crawling engine cho Google News
-- Category management system
+**Existing Infrastructure** (Production Ready):
 
-### Available Documentation Analysis
+- ✅ FastAPI backend with comprehensive REST APIs
+- ✅ PostgreSQL database with full article/category/job models
+- ✅ Redis + Celery task queue system (37 advanced methods in ArticleRepository)
+- ✅ Docker containerized architecture
+- ✅ Advanced crawling engine with deduplication and error handling
+- ✅ React + TypeScript frontend foundation (Categories CRUD completed)
 
-**Available Documentation**:
-- ✅ Tech Stack Documentation (từ source code)
-- ✅ Source Tree/Architecture (đã xem qua)
-- ✅ API Documentation (Swagger UI available)
-- ❌ UX/UI Guidelines (chưa có)
-- ❌ Frontend specifications (chưa có)
-- ✅ Docker deployment setup
+**Enhancement Scope**:
+Transform from basic category management to a comprehensive job-centric article management system with integrated scheduling capabilities.
 
-### Enhancement Scope Definition
+**Core Features Redesign**:
 
-**Enhancement Type**: ☑️ New Feature Addition (Web Interface)
+1. ✅ **Categories Management** - COMPLETED (Foundation ready)
+2. 🎯 **Enhanced Jobs Management with Articles View** - PRIMARY FOCUS
+3. 🎯 **Integrated Category Scheduling** - SECONDARY FOCUS
+4. 📊 **Job-Centric Article Management** - INTEGRATED APPROACH
 
-**Enhancement Description**: 
-Tạo web interface đơn giản cho Admin/Developer để quản lý Google News Scraper system thay vì sử dụng API trực tiếp.
+**Technical Assessment**: 90% of backend infrastructure already exists. Frontend components need enhancement to leverage existing powerful backend capabilities.
 
-**Core Features** (Updated Status):
-1. ✅ Categories Management (CRUD operations) - **COMPLETED**
-2. 🔧 Manual crawl job triggering - **BACKEND READY, FRONTEND PENDING**
-3. ❌ Schedule jobs configuration - **NOT STARTED**
-4. ❌ View crawled articles - **NOT STARTED**
+## Goals and Success Criteria
 
-**Technical Stack Choice** (Implementation Status):
-- ✅ Frontend: Vite + React + TypeScript - **IMPLEMENTED**
-- ✅ Styling: TailwindCSS + Shadcn UI - **IMPLEMENTED**
-- ✅ Target Users: Admin/Developer - **CONFIRMED**
-- ✅ UI/UX: Simple, functional (không cầu kỳ) - **ACHIEVED**
+**Primary Goals**:
 
-**Impact Assessment**: ☑️ Minimal Impact (isolated additions) - vì chỉ thêm frontend không ảnh hưởng backend API hiện tại.
+- Create job-centric article management interface for direct crawl result inspection
+- Implement priority-based job queue management with "Run Now" capabilities
+- Integrate category scheduling within existing category management workflow
+- Provide comprehensive job lifecycle management (view/edit/delete/prioritize)
 
-### Goals and Background Context
+**Success Criteria**:
 
-**Goals**:
-- Cung cấp web interface thân thiện thay thế cho Swagger UI/curl commands
-- Đơn giản hóa việc quản lý categories và crawl jobs 
-- Cho phép xem và monitor articles đã crawl được
-- Thiết lập và quản lý scheduled crawling jobs
+- ✅ Admin can view articles crawled by specific jobs with key metadata (url, title, publish_date, content, keywords)
+- ✅ Admin can prioritize jobs to run immediately, bypassing queue when resources available
+- ✅ Admin can manage auto-crawl schedules directly within category management interface
+- ✅ Admin can perform full CRUD operations on jobs with proper confirmation dialogs
 
 **Background Context**:
-Hệ thống Google News Scraper hiện tại hoạt động tốt với REST API backend, nhưng việc tương tác qua Swagger UI hoặc curl commands không thuận tiện cho việc quản lý hàng ngày. Web interface sẽ cung cấp giao diện trực quan để thực hiện các tác vụ quản trị mà không cần kiến thức technical về API calls.
+Current system operates effectively via REST APIs, but lacks integrated article inspection capabilities tied to specific crawl jobs. The enhancement focuses on job-centric workflow where users can immediately see crawl results and manage job priorities dynamically.
 
-### Current Implementation Progress
+### Implementation Status Assessment
 
-**✅ COMPLETED FEATURES:**
+**✅ FOUNDATION COMPLETED:**
 
-1. **Frontend Development Environment** (Story 1.1)
-   - ✅ Vite + React + TypeScript + TailwindCSS + Shadcn UI setup
-   - ✅ Docker containerization with frontend service
-   - ✅ API integration layer (services/api.ts, categoriesService.ts)
-   - ✅ Comprehensive test setup (Vitest, Testing Library, Jest-DOM)
+1. **Frontend Architecture** (Ready for Enhancement)
 
-2. **Categories Management Interface** (Story 1.2)
-   - ✅ Full CRUD operations for categories
+   - ✅ Vite + React + TypeScript + TailwindCSS + Shadcn UI
+   - ✅ Docker containerization with hot reload
+   - ✅ API integration layer with error handling
+   - ✅ Component testing framework (Vitest + Testing Library)
+2. **Categories Management** (Production Ready)
+
+   - ✅ Full CRUD with form validation
    - ✅ Components: CategoriesList, CategoryForm, DeleteConfirmationDialog
-   - ✅ Integration with `/api/v1/categories` API endpoints
-   - ✅ Form validation and error handling
-   - ✅ TypeScript interfaces and type safety
+   - ✅ Integration with `/api/v1/categories` endpoints
+   - ✅ TypeScript interfaces with proper error handling
+3. **Jobs Infrastructure** (Backend Complete, Frontend Partial)
 
-3. **Backend Stability & API Fixes** (Hotfixes)
-   - ✅ Pydantic Settings configuration fixes (src/shared/config.py)
-   - ✅ Async context manager fixes (src/database/repositories/base.py)
-   - ✅ Category API endpoints reliability improvements
+   - ✅ Complete Jobs API at `/api/v1/jobs` with filtering/pagination
+   - ✅ Celery task system with priority queue support
+   - ✅ Job tracking with comprehensive metadata (CrawlJobRepository)
+   - ✅ Frontend: JobsPage, ManualCrawlTrigger, JobStatus, JobsList components
+   - 🔧 **Enhancement Needed**: Articles view per job, job editing, priority management
+4. **Articles Infrastructure** (Backend 90% Complete)
 
-**🔧 PARTIALLY COMPLETED:**
+   - ✅ ArticleRepository with 37 advanced methods including job-specific queries
+   - ✅ Advanced filtering: by category, date range, relevance scores
+   - ✅ Optimized pagination and search capabilities
+   - ❌ **Missing**: REST API endpoints at `/api/v1/articles` (wrapper needed)
+   - ❌ **Missing**: Frontend article viewing components
 
-4. **Crawling Infrastructure** (Backend Ready)
-   - ✅ Celery task system with comprehensive error handling
-   - ✅ `trigger_category_crawl_task` for manual job triggering
-   - ✅ Job tracking with CrawlJobRepository
-   - ✅ Health monitoring and cleanup tasks
-   - ❌ Frontend UI for manual job triggering (Story 2.1 - Pending)
+**📊 Current Status:**
 
-**❌ REMAINING FEATURES:**
-
-5. **Articles Viewing Interface** (Story 2.2 - Not Started)
-   - ❌ Backend: `/api/v1/articles` API endpoints needed
-   - ❌ Frontend: Articles listing, search, and filtering UI
-   - ❌ ArticleRepository implementation gaps
-
-6. **Job Scheduling Interface** (Story 2.3 - Not Started)
-   - ❌ Backend: Dynamic scheduling API endpoints needed
-   - ❌ Frontend: Schedule creation and management UI
-   - ❌ Integration with Celery Beat for dynamic scheduling
-
-**📊 Progress Summary:**
-- **Epic Progress**: 50% Complete (2.5/5 major features)
-- **Frontend Environment**: 100% Complete
-- **Categories Management**: 100% Complete
-- **Manual Job Triggering**: 70% Complete (Backend ready, Frontend pending)
-- **Articles Interface**: 0% Complete
-- **Job Scheduling**: 0% Complete
+- **Backend Infrastructure**: 95% Complete (just API wrappers needed)
+- **Frontend Foundation**: 85% Complete (components need enhancement)
+- **Integration Layer**: 80% Complete (needs articles API integration)
 
 ### Change Log
 
-| Change | Date | Version | Description | Author |
-|--------|------|---------|-------------|--------|
-| Initial PRD | 2025-09-12 | v1.0 | Web Interface Enhancement PRD | BMad Master |
-| Progress Update | 2025-09-14 | v1.1 | Updated to reflect actual implementation progress and roadmap realignment | BMad Master |
+| Change         | Date       | Version | Description                                                              | Author      |
+| -------------- | ---------- | ------- | ------------------------------------------------------------------------ | ----------- |
+| Initial PRD    | 2025-09-12 | v1.0    | Original web interface enhancement                                       | BMad Master |
+| Major Revision | 2025-09-15 | v2.0    | Redesigned for job-centric article management with integrated scheduling | BMad Master |
 
 ## Requirements
 
 ### Functional Requirements
 
-**FR1**: Web interface sẽ cung cấp CRUD operations cho categories (Create, Read, Update, Delete) tương tác với existing `/api/v1/categories` endpoints
+**FR1: Job-Centric Article Management**
 
-**FR2**: System sẽ cho phép trigger manual crawl jobs cho specific categories thông qua existing Celery task system
+- System shall display articles crawled by specific jobs with metadata: URL, title, publish_date, content preview, keywords
+- Users shall filter articles by job ID with pagination support
+- Article details shall be viewable in modal/detail view format
+- System shall leverage existing ArticleRepository methods for data retrieval
 
-**FR3**: Interface sẽ cung cấp scheduling functionality để set up recurring crawl jobs cho categories với configurable intervals  
+**FR2: Enhanced Jobs Management**
 
-**FR4**: Web app sẽ display danh sách articles đã crawl được với filtering và search capabilities
+- Users shall perform CRUD operations on crawl jobs (Create, Read, Update, Delete)
+- Job editing shall allow modification of job configuration (priority, retry_count, metadata)
+- Job deletion shall require user confirmation with impact warnings
+- System shall integrate with existing `/api/v1/jobs` endpoints
 
-**FR5**: System sẽ show real-time status của crawl jobs (pending, running, completed, failed) thông qua existing job tracking system
+**FR3: Priority-Based Job Queue**
 
-### Non Functional Requirements
+- Users shall set jobs to "Run Now" priority, bypassing normal queue order
+- High-priority jobs shall execute immediately when worker resources become available
+- System shall maintain job priority through existing Celery priority queue infrastructure
+- Priority changes shall be reflected in real-time job status monitoring
 
-**NFR1**: Web interface phải maintain existing API performance characteristics và không impact backend system response times
+**FR4: Integrated Category Scheduling**
 
-**NFR2**: Frontend application phải responsive và functional trên desktop browsers (Chrome, Firefox, Safari)
+- Category management interface shall include "Schedules" tab within category detail/edit forms
+- Users shall configure auto-crawl schedules with interval settings (minutes/hours/days)
+- Category list shall display next scheduled run time for each category
+- Schedule changes shall integrate with Celery Beat dynamic scheduling
 
-**NFR3**: Page load times không được vượt quá 3 seconds với typical data volumes
+**FR5: Enhanced Category Management Integration**
 
-**NFR4**: UI phải simple, clean và intuitive cho Admin/Developer users mà không cần extensive training
+- Existing category CRUD operations shall be preserved and enhanced
+- Category forms shall include integrated scheduling configuration
+- Category status indicators shall show both active/inactive and schedule status
+- System shall maintain backward compatibility with existing `/api/v1/categories` endpoints
 
-**NFR5**: Application phải handle API errors gracefully với user-friendly error messages
+### Non-Functional Requirements
 
-### Compatibility Requirements
+**NFR1: Performance**
 
-**CR1**: Web interface phải consume existing REST API endpoints (`/api/v1/categories`, `/health`, etc.) without requiring API modifications
+- Article listing shall load within 2 seconds for up to 1000 articles per job
+- Job priority updates shall reflect in UI within 5 seconds
+- Real-time job status monitoring shall update every 30 seconds maximum
+- Category schedule display shall not impact category list loading performance
 
-**CR2**: Frontend application phải compatible với existing Docker containerized deployment without affecting current services
+**NFR2: Usability**
 
-**CR3**: Authentication/authorization (nếu có) phải integrate với existing backend security model
+- Interface shall be intuitive for admin/developer users without extensive training
+- Job-to-articles navigation shall require maximum 2 clicks
+- Form validation shall provide immediate feedback with clear error messages
+- Priority job actions shall be prominently displayed and easily accessible
 
-**CR4**: New frontend service phải coexist với existing Swagger UI documentation và không conflict về ports/routing
+**NFR3: Reliability**
 
-## User Interface Enhancement Goals
+- System shall gracefully handle API timeouts with appropriate user feedback
+- Job priority changes shall be atomic - either fully succeed or fail with rollback
+- Article viewing shall degrade gracefully when content is unavailable
+- Schedule configuration shall validate inputs before submission
 
-### Integration with Existing UI
+**NFR4: Compatibility**
 
-**Design System Approach**: 
-Sẽ tạo một standalone web application với TailwindCSS + Shadcn UI component library. Vì đây là new frontend application (không có existing UI), chúng ta sẽ thiết lập design system mới nhưng consistent và professional.
+- Frontend shall maintain compatibility with existing Docker deployment
+- API integration shall preserve existing endpoint contracts
+- New features shall not impact existing Swagger UI functionality
+- System shall support desktop browsers: Chrome 90+, Firefox 88+, Safari 14+
 
-**Component Strategy**:
-- Sử dụng Shadcn UI components như Button, Input, Table, Dialog, Select để đảm bảo consistency
-- TailwindCSS utility classes cho custom styling và responsive design
-- Neutral color palette (grays, blues) phù hợp với admin interface
-- Typography scale consistent throughout application
+### Technical Constraints
 
-### Modified/New Screens and Views
+**TC1: Backend Integration**
 
-**Core Views cần implement**:
+- Must utilize existing ArticleRepository methods without modification
+- Job priority system must work within current Celery queue infrastructure
+- Schedule management must integrate with existing Celery Beat configuration
+- All new APIs must follow existing FastAPI patterns and error handling
 
-1. **Categories Management View**
-   - Categories list table với actions (Edit, Delete, Toggle Active)
-   - Add new category form/modal
-   - Edit category form/modal
+**TC2: Frontend Architecture**
 
-2. **Crawl Jobs Management View** 
-   - Manual crawl trigger interface với category selection
-   - Job scheduling form với time/interval configuration
-   - Active jobs status list với real-time updates
+- Must build upon existing React + TypeScript foundation
+- Component design must follow established TailwindCSS + Shadcn UI patterns
+- State management must use existing React Context approach
+- Testing must integrate with current Vitest + Testing Library setup
 
-3. **Articles View**
-   - Articles listing table với pagination
-   - Search và filter functionality (by category, date range)
-   - Article detail view/modal
+## User Experience Design
 
-4. **Job Status Monitor**
-   - Current running jobs display
-   - Job history với status indicators (success/failed/pending)
+### Enhanced Interface Architecture
 
-### UI Consistency Requirements
+**Design Philosophy**: Job-centric workflow with integrated article inspection and streamlined scheduling management.
 
-**Visual Consistency Standards**:
-- **Color Scheme**: Consistent với admin interface conventions (neutral với accent colors cho actions)
-- **Spacing**: TailwindCSS spacing scale (4px increments) 
-- **Typography**: Consistent font family và size hierarchy
-- **Interactive States**: Hover, focus, disabled states cho tất cả interactive elements
+**Navigation Structure**:
 
-**Component Consistency**:
-- Buttons: Consistent sizing (sm, md, lg) và variants (primary, secondary, destructive)
-- Forms: Consistent form field styling, validation states, error messaging
-- Tables: Consistent row styling, sorting indicators, action buttons placement
-- Modals/Dialogs: Consistent overlay styling, header/footer layout
-
-**Responsive Behavior**:
-- Desktop-first approach (admin tool primarily used on desktop)
-- Minimum mobile compatibility cho basic functionality
-- Tables responsive với horizontal scroll on smaller screens
-
-## Technical Constraints and Integration Requirements
-
-### Existing Technology Stack
-
-**Languages**: Python 3.11 (Backend), JavaScript/TypeScript (New Frontend)
-**Frameworks**: FastAPI, Celery, SQLAlchemy, Alembic
-**Database**: PostgreSQL 15
-**Infrastructure**: Docker Compose, Uvicorn ASGI server
-**External Dependencies**: Google News APIs, newspaper4k library
-
-**New Frontend Stack**:
-**Frontend Framework**: Node.js application 
-**Styling**: TailwindCSS + Shadcn UI components
-**Build Tool**: Vite/Next.js (to be determined)
-**Package Manager**: npm/yarn
-
-### Integration Approach
-
-**Database Integration Strategy**: Frontend sẽ KHÔNG directly access database, chỉ consume REST APIs từ existing FastAPI backend
-
-**API Integration Strategy**: 
-- Consume existing `/api/v1/categories` endpoints
-- Use existing `/health` endpoints cho system monitoring
-- Có thể cần thêm API endpoints cho articles listing và job management
-- Authentication headers (nếu cần) sẽ được forward đến backend APIs
-
-**Frontend Integration Strategy**: 
-- Standalone Single Page Application (SPA) 
-- Axios/Fetch cho API calls đến FastAPI backend
-- Client-side routing (React Router hoặc similar)
-- State management với React Context hoặc lightweight solution
-
-**Testing Integration Strategy**: 
-- Frontend unit tests với Jest/Vitest
-- Integration tests với existing API endpoints  
-- E2E testing với Playwright/Cypress
-- Separate test suite không impact existing backend tests
-
-### Code Organization and Standards
-
-**File Structure Approach**:
 ```
-frontend/
-├── src/
-│   ├── components/     # Reusable UI components
-│   ├── pages/         # Main application views
-│   ├── services/      # API integration layer
-│   ├── hooks/         # Custom React hooks
-│   └── utils/         # Helper functions
-├── public/
-└── package.json
+Main Navigation:
+├── Categories (Enhanced with Scheduling)
+├── Jobs Management (Primary Focus)
+└── System Health
 ```
 
-**Naming Conventions**: 
-- PascalCase cho React components
-- camelCase cho functions và variables
-- kebab-case cho file names
-- Consistent với existing Python backend snake_case cho API data
+**Key UI Enhancements**:
 
-**Coding Standards**:
-- ESLint + Prettier cho code formatting
-- TypeScript cho type safety
-- Component composition over inheritance
-- Functional components với hooks
+### 1. Enhanced Jobs Management Interface
 
-**Documentation Standards**:
-- JSDoc comments cho complex functions
-- README với setup và development instructions
-- Component documentation với Storybook (optional)
+**Jobs List View** (Primary Interface):
 
-### Deployment and Operations
+```
+Job Actions Bar:
+[🚀 Run Now] [✏️ Edit] [🗑️ Delete] [👁️ View Articles]
 
-**Build Process Integration**:
-- Separate Docker container cho frontend application
-- Multi-stage build với Node.js base image
-- Static asset optimization và minification
-- Environment-specific configuration
+Job Status Indicators:
+● Running (with progress) ● Pending (with queue position) ● Completed ● Failed ● Priority (⚡ indicator)
 
-**Deployment Strategy**:
-- Add frontend service vào existing docker-compose.yml
-- Expose trên port khác với backend (ví dụ: 3000)
-- Nginx reverse proxy (optional) cho production routing
-- Health check endpoint cho container orchestration
+Job Details Summary:
+- Category Name | Status | Priority | Articles Found | Duration | Started/Completed
+```
 
-**Monitoring and Logging**:
-- Browser console logging cho development
-- Error boundary components cho production error handling
-- Integration với existing backend logging correlation IDs
-- Basic performance monitoring
+**Job-to-Articles Integration**:
 
-**Configuration Management**:
-- Environment variables cho API endpoints
-- Build-time configuration cho different environments  
-- Runtime configuration cho feature flags (nếu cần)
+```
+Job Detail Modal:
+├── Job Information Tab
+│   ├── Status, priority, configuration
+│   └── Real-time progress monitoring
+├── Articles Tab (NEW)
+│   ├── Articles found by this job
+│   ├── Metadata: URL, title, publish_date, content preview
+│   └── Filtered view with search capabilities
+└── Edit Configuration Tab
+    ├── Priority settings
+    ├── Retry configuration
+    └── Job metadata
+```
 
-### Risk Assessment and Mitigation
+### 2. Integrated Category Scheduling
 
-**Technical Risks**:
-- API endpoint limitations cho articles listing → **Mitigation**: Survey existing endpoints, identify gaps sớm
-- CORS issues khi frontend call backend APIs → **Mitigation**: Configure CORS properly trong FastAPI settings
-- Performance với large datasets → **Mitigation**: Implement pagination và lazy loading
+**Enhanced Category Form**:
 
-**Integration Risks**:
-- Breaking changes trong existing APIs → **Mitigation**: Version API calls và backward compatibility
-- Authentication/authorization complexity → **Mitigation**: Start với no-auth, add incrementally
-- Docker networking issues → **Mitigation**: Use docker-compose networking, test early
+```
+Category Detail Form:
+├── Basic Info Tab (existing)
+├── Keywords Configuration (existing)
+└── Auto-Crawl Schedules Tab (NEW)
+    ├── Schedule Status: [●] Active/Inactive
+    ├── Interval Configuration: [Dropdown: 15min/30min/1hr/6hr/daily]
+    ├── Next Run Display: "Next crawl: Dec 15, 2024 2:30 PM"
+    └── Schedule History (last 5 runs with status)
+```
 
-**Deployment Risks**:
-- Port conflicts với existing services → **Mitigation**: Document port allocation, use different ports
-- Build process complexity → **Mitigation**: Keep build simple, avoid complex toolchains initially
-- Resource consumption → **Mitigation**: Lightweight Node.js setup, monitor resource usage
+**Category List Enhancement**:
 
-**Mitigation Strategies**:
-- **Incremental Development**: Build và deploy incrementally để test integration sớm
-- **API Documentation**: Maintain clear documentation về API contracts
-- **Rollback Plan**: Keep existing Swagger UI available như fallback option
-- **Testing Strategy**: Comprehensive testing với real backend APIs
+```
+Enhanced Categories Table:
+Name | Keywords | Status | Last Crawl | Next Scheduled | Actions
+Tech | python,ai | ● Active | 2hr ago | in 13min | [Edit][Schedule][Crawl Now]
+```
 
-## Epic and Story Structure
+### 3. Priority-Based Job Actions
 
-### Epic Approach
+**Run Now Functionality**:
 
-**Epic Structure Decision**: **Single Epic** với rationale: Web interface là một cohesive feature set với shared frontend architecture, common API integration patterns, và unified user experience. Breaking into multiple epics sẽ tạo ra artificial boundaries và complicate deployment/testing.
+```
+Priority Job Controls:
+┌─────────────────────────────────────────────────┐
+│ [🚀 Run Now]  [⚡ High Priority]  [⏸️ Cancel]  │
+│                                                 │
+│ ⚠️  High priority jobs will run as soon as      │
+│     worker resources become available           │
+└─────────────────────────────────────────────────┘
+```
 
-# Epic 1: Google News Scraper Web Interface
+### Design System Standards
 
-**Epic Goal**: Tạo web interface đơn giản cho Admin/Developer để quản lý categories, trigger crawl jobs, set schedules, và view articles mà không cần sử dụng Swagger UI hoặc command line tools.
+**Color Coding**:
 
-**Integration Requirements**: 
-- Frontend app sẽ consume existing FastAPI REST endpoints
-- Minimal hoặc không có changes đến existing backend architecture  
-- Coexist với current Docker containerized deployment
-- Maintain existing system performance và reliability
+- 🟢 Running jobs: Green indicators
+- 🟡 Pending jobs: Yellow with queue position
+- 🔴 Failed jobs: Red with error indicators
+- ⚡ Priority jobs: Lightning bolt with distinct styling
+- 🔵 Scheduled items: Blue accent for next run times
 
-## Story Sequence (Updated with Implementation Status)
+**Interactive Elements**:
 
-### ✅ Story 1.1: Setup Frontend Development Environment - **COMPLETED**
+- **Action Buttons**: Primary (Run Now), Secondary (Edit), Destructive (Delete)
+- **Status Pills**: Color-coded with appropriate icons
+- **Priority Indicators**: Visual hierarchy with lightning bolt icons
+- **Confirmation Dialogs**: Impact warnings for destructive actions
+
+**Information Hierarchy**:
+
+1. **Critical Actions** (Run Now, Priority) - Prominent placement
+2. **Job Status** - Always visible with real-time updates
+3. **Article Counts** - Quick metrics display
+4. **Secondary Actions** (Edit, Delete) - Accessible but not dominant
+
+## Implementation Plan
+
+### Phase 1: Enhanced Jobs Management (Priority 1) - 2 weeks
+
+**Backend Tasks** (4 days):
+
+```yaml
+Task 1.1: Articles API Endpoints (1.5 days)
+  - Create /api/v1/articles routes with job_id filtering
+  - Implement pagination, search, and metadata selection
+  - Leverage existing ArticleRepository.get_articles_by_job_id()
+  - Add article detail endpoint for modal display
+
+Task 1.2: Job Priority Management API (1 day)
+  - Extend /api/v1/jobs with priority update endpoint
+  - Implement Celery priority queue integration
+  - Add job configuration update (retry_count, metadata)
+
+Task 1.3: Job-Article Association Tracking (1 day)
+  - Ensure job_id is properly tracked in ArticleCategory associations
+  - Add correlation_id tracking for job-specific article queries
+
+Task 1.4: Enhanced Job Status API (0.5 days)
+  - Add queue position information to job status responses
+  - Include articles_found count in real-time updates
+```
+
+**Frontend Tasks** (6 days):
+
+```yaml
+Task 1.5: Job Actions Enhancement (2 days)
+  - Add "Run Now", "Edit", "Delete" buttons to JobsList
+  - Implement job priority update with confirmation dialogs
+  - Create JobEditModal with configuration options
+
+Task 1.6: Job-Articles Integration (2 days)
+  - Create JobArticlesModal/Tab component
+  - Implement ArticlesService for /api/v1/articles integration
+  - Add article listing with metadata display (URL, title, date, content preview)
+
+Task 1.7: Priority Queue UI (1 day)
+  - Add priority indicators (lightning bolt) to job status
+  - Implement queue position display for pending jobs
+  - Create priority job confirmation dialogs
+
+Task 1.8: Job Management Testing (1 day)
+  - Unit tests for new components
+  - Integration tests with enhanced APIs
+```
+
+### Phase 2: Integrated Category Scheduling (Priority 2) - 2 weeks
+
+**Backend Tasks** (5 days):
+
+```yaml
+Task 2.1: Dynamic Scheduling Infrastructure (2 days)
+  - Integrate Celery Beat with database-driven schedules
+  - Create Schedule model with category associations
+  - Implement schedule CRUD operations
+
+Task 2.2: Category-Schedule API Integration (2 days)
+  - Add /api/v1/categories/{id}/schedules endpoints
+  - Extend category responses to include schedule status
+  - Implement schedule validation and conflict detection
+
+Task 2.3: Celery Beat Dynamic Updates (1 day)
+  - Enable schedule changes without container restarts
+  - Add schedule monitoring and next run calculations
+```
+
+**Frontend Tasks** (5 days):
+
+```yaml
+Task 2.4: Enhanced Category Forms (2 days)
+  - Add "Schedules" tab to CategoryForm component
+  - Implement schedule configuration UI (interval selection)
+  - Create schedule history display
+
+Task 2.5: Category List Schedule Integration (1.5 days)
+  - Add "Next Scheduled" column to categories table
+  - Implement schedule status indicators
+  - Add quick "Crawl Now" action from category list
+
+Task 2.6: Schedule Management Components (1.5 days)
+  - Create ScheduleConfigModal for advanced settings
+  - Implement schedule activation/deactivation toggles
+  - Add schedule conflict warnings and validation
+```
+
+### Phase 3: Polish and Optimization (Priority 3) - 1 week
+
+**Integration and Testing** (3 days):
+
+```yaml
+Task 3.1: End-to-End Integration (1 day)
+  - Complete workflow testing: Category → Schedule → Job → Articles
+  - Performance optimization for large article datasets
+  - Real-time updates verification
+
+Task 3.2: User Experience Polish (1 day)
+  - UI/UX refinements based on workflow testing
+  - Loading states and error handling improvements
+  - Mobile responsiveness verification
+
+Task 3.3: Documentation and Deployment (1 day)
+  - Update API documentation
+  - Docker configuration validation
+  - Deployment process documentation
+```
+
+### Technical Implementation Details
+
+**API Integration Strategy**:
+
+- Leverage existing FastAPI infrastructure and patterns
+- Maintain backward compatibility with current endpoints
+- Use existing database models and relationships
+- Implement proper error handling and validation
+
+**Frontend Architecture**:
+
+- Build upon existing React + TypeScript foundation
+- Follow established component patterns and styling
+- Integrate with existing state management approach
+- Maintain consistency with current testing frameworks
+
+## Risk Assessment and Mitigation
+
+### Technical Risks
+
+**High Priority Risks**:
+
+**R1: Job Priority Queue Conflicts**
+
+- **Risk**: Priority job changes might conflict with existing Celery queue operations
+- **Impact**: Job execution order inconsistencies or queue deadlocks
+- **Mitigation**: Implement atomic priority updates with rollback mechanisms; test with existing queue infrastructure
+- **Validation**: Create test scenarios with concurrent priority changes
+
+**R2: Article-Job Association Tracking**
+
+- **Risk**: Historical jobs might not have proper article associations
+- **Impact**: "View Articles" function showing empty or incorrect results
+- **Mitigation**: Implement correlation_id backfill for historical data; graceful handling of missing associations
+- **Validation**: Test with existing job data before frontend release
+
+**R3: Schedule Integration Complexity**
+
+- **Risk**: Celery Beat dynamic scheduling might require container restarts
+- **Impact**: Schedule changes not taking effect until deployment
+- **Mitigation**: Research celery-beat-scheduler library; implement database-driven scheduling
+- **Validation**: Test schedule updates without container restarts
+
+**Medium Priority Risks**:
+
+**R4: Performance with Large Article Datasets**
+
+- **Risk**: Jobs with 1000+ articles might cause UI performance issues
+- **Impact**: Slow page loads, browser freezing on article viewing
+- **Mitigation**: Implement pagination, virtual scrolling, lazy loading
+- **Validation**: Test with high-volume article datasets
+
+**R5: Real-time Updates Overhead**
+
+- **Risk**: Frequent job status polling might impact backend performance
+- **Impact**: API response delays during high job activity periods
+- **Mitigation**: Implement intelligent polling intervals, WebSocket consideration for future
+- **Validation**: Load testing with multiple concurrent users
+
+### Integration Risks
+
+**I1: Backward Compatibility**
+
+- **Risk**: Enhanced APIs might break existing Swagger UI functionality
+- **Impact**: Existing integrations or manual API usage fails
+- **Mitigation**: Maintain separate endpoint versions; thorough API contract testing
+- **Validation**: Automated tests for existing API contracts
+
+**I2: Database Migration Complexity**
+
+- **Risk**: Schedule model additions might require complex migrations
+- **Impact**: Downtime during deployment, data consistency issues
+- **Mitigation**: Design additive-only schema changes; test migrations on staging data
+- **Validation**: Database migration testing with production-like datasets
+
+### Mitigation Strategy Summary
+
+**Phase 1 Safeguards** (Enhanced Jobs Management):
+
+- Implement job priority changes as optional features with fallback to normal queue
+- Add extensive logging for job-article association tracking
+- Create manual override capabilities for critical job operations
+
+**Phase 2 Safeguards** (Category Scheduling):
+
+- Implement scheduling as additive feature - existing manual workflows remain unchanged
+- Design schedule activation as opt-in per category
+- Maintain manual crawl capabilities as primary method
+
+**Phase 3 Safeguards** (Polish):
+
+- Comprehensive rollback testing for all enhanced features
+- Performance benchmarking with realistic data volumes
+- User acceptance testing with actual admin workflows
+
+**Rollback Plan**:
+
+- All enhancements are additive - existing functionality remains unchanged
+- Feature flags for new UI components allow selective disabling
+- Database changes are non-destructive - original data remains intact
+- Swagger UI continues to provide full API access as fallback
+
+## Epic Definition
+
+# Epic: Job-Centric Article Management with Integrated Scheduling
+
+**Epic Goal**: Transform the Google News Scraper interface into a job-centric management system where administrators can directly view articles crawled by specific jobs, manage job priorities with "Run Now" capabilities, and configure automated scheduling within the category management workflow.
+
+**Epic Value**: Provides immediate visibility into crawl results through job-specific article views, streamlines job priority management for urgent crawling needs, and integrates scheduling seamlessly into existing category management workflows.
+
+## Story Structure (Updated v2.0)
+
+### ✅ Foundation Stories - **COMPLETED**
+
+**Story 1.1: Frontend Development Environment** - ✅ **COMPLETED**
+
+- React + TypeScript + TailwindCSS foundation established
+- Docker integration with hot reload configured
+- API integration layer and testing framework ready
+
+**Story 1.2: Categories Management Interface** - ✅ **COMPLETED**
+
+- Full CRUD operations with form validation
+- Integration with existing `/api/v1/categories` endpoints
+- Component foundation ready for scheduling integration
+
+**Story 1.3: Basic Jobs Management** - ✅ **COMPLETED**
+
+- JobsPage, ManualCrawlTrigger, JobStatus, JobsList components
+- Integration with `/api/v1/jobs` endpoints
+- Real-time job monitoring capabilities
+
+### 🎯 Enhanced Stories - **IMPLEMENTATION FOCUS**
+
+### **Story 2.1: Enhanced Jobs Management with Article Viewing** - **PRIMARY FOCUS**
+
 As an **Admin/Developer**,
-I want **a properly configured frontend development environment**,
-so that **I can develop the web interface efficiently without affecting the existing backend system**.
+I want **to view articles crawled by specific jobs and manage job priorities**,
+so that **I can immediately inspect crawl results and prioritize urgent crawling tasks**.
 
 **Acceptance Criteria:**
-1. Node.js frontend project initialized với TailwindCSS + Shadcn UI
-2. Development server chạy trên port 3000 (không conflict với existing services)
-3. API integration layer configured để call existing FastAPI endpoints
-4. Docker configuration updated để include frontend service
-5. Build và deployment pipeline working end-to-end
 
-**Integration Verification:**
-- **IV1**: Existing backend services continue running unaffected when frontend development server starts
-- **IV2**: API calls từ frontend successfully reach existing `/health` endpoint
-- **IV3**: Docker compose up hoàn toàn functional với cả frontend và backend services
+1. **Job Actions Enhancement**: Add "Run Now", "Edit", "Delete" buttons to each job in JobsList
+2. **Article Viewing Integration**: "View Articles" button opens modal/tab showing articles found by that specific job
+3. **Article Metadata Display**: Show URL, title, publish_date, content preview, matched keywords for each article
+4. **Job Priority Management**: "Run Now" sets job to high priority, bypassing normal queue order
+5. **Job Configuration Editing**: Modal for editing job settings (priority, retry_count, metadata)
+6. **Job Deletion with Confirmation**: Confirmation dialog showing impact before job deletion
+7. **Data Export from Article View** : In the "View Articles" interface, an "Export Data" button must be present. Upon clicking, the user must be prompted to choose an export format from  **JSON** ,  **Excel (.xlsx)** , and  **CSV** . All exported files must be encoded in **UTF-8** to ensure full support for Vietnamese characters.
 
-### ✅ Story 1.2: Categories Management Interface - **COMPLETED**
+**Technical Implementation:**
+
+```yaml
+Backend (1.5 days):
+  - Create /api/v1/articles?job_id={id} endpoint
+  - Add /api/v1/jobs/{id}/priority endpoint for priority updates
+  - Enhance job status responses with queue position info
+
+Frontend (2.5 days):
+  - Create JobArticlesModal component with article listing
+  - Add JobEditModal for configuration updates
+  - Implement priority update with confirmation dialogs
+  - Add article metadata display with search/filter
+```
+
+**Integration Requirements:**
+
+- Leverage existing ArticleRepository.get_articles_with_categories() method
+- Utilize existing Celery priority queue infrastructure
+- Maintain compatibility with current job tracking system
+
+### **Story 2.2: Integrated Category Scheduling** - **SECONDARY FOCUS**
+
 As an **Admin/Developer**,
-I want **a web interface to manage categories (view, create, edit, delete)**,
-so that **I can manage crawling categories without using Swagger UI or curl commands**.
+I want **to configure auto-crawl schedules within category management**,
+so that **I can set up automated crawling without leaving the category interface**.
 
 **Acceptance Criteria:**
-1. Categories list view displaying all categories từ `/api/v1/categories`
-2. Create category form/modal với validation
-3. Edit category functionality với existing data population
-4. Delete category với confirmation dialog
-5. Toggle active/inactive status cho categories
-6. Error handling cho API failures với user-friendly messages
 
-**Integration Verification:**
-- **IV1**: All category operations use existing `/api/v1/categories` endpoints without modifications
-- **IV2**: Existing Swagger UI category endpoints continue working alongside new interface
-- **IV3**: No performance degradation trong category API response times
+1. **Enhanced Category Forms**: Add "Schedules" tab to CategoryForm component
+2. **Schedule Configuration**: Interval selection (15min/30min/1hr/6hr/daily) with next run display
+3. **Category List Integration**: "Next Scheduled" column showing countdown to next crawl
+4. **Quick Actions**: "Crawl Now" button in category list for immediate manual triggering
+5. **Schedule History**: Display last 5 scheduled runs with success/failure status
+6. **Schedule Activation**: Toggle to enable/disable scheduling per category
 
-### 🔧 Story 2.1: Manual Crawl Job Triggering - **BACKEND READY, FRONTEND PENDING**
+**Technical Implementation:**
+
+```yaml
+Backend (3 days):
+  - Create Schedule model with category_id relationships
+  - Implement /api/v1/categories/{id}/schedules endpoints
+  - Integrate with Celery Beat dynamic scheduling
+  - Add schedule monitoring and next run calculations
+
+Frontend (2 days):
+  - Add Schedules tab to existing CategoryForm
+  - Create ScheduleConfigModal for advanced settings
+  - Enhance Categories table with schedule status column
+  - Implement schedule activation toggles
+```
+
+**Integration Requirements:**
+
+- Build upon existing Categories CRUD infrastructure
+- Integrate with current Celery Beat configuration
+- Maintain category form validation and error handling patterns
+
+### **Story 2.3: System Integration and Polish** - **FINAL PHASE**
+
 As an **Admin/Developer**,
-I want **to trigger crawl jobs manually through the web interface**,
-so that **I can start crawling for specific categories on-demand**.
+I want **seamless integration between job management, article viewing, and scheduling**,
+so that **I have a unified workflow for managing the entire crawling system**.
 
 **Acceptance Criteria:**
-1. Category selection dropdown cho manual crawl triggering
-2. Trigger crawl button với confirmation
-3. Job status display sau khi trigger (job ID, status)
-4. Integration với existing Celery task system
-5. Real-time job status updates (polling-based)
 
-**Implementation Status:**
-- ✅ **Backend Complete**: `trigger_category_crawl_task` Celery task implemented
-- ✅ **Backend Complete**: Job tracking with CrawlJobRepository
-- ✅ **Backend Complete**: Comprehensive error handling and retry logic
-- ❌ **Frontend Pending**: UI components for job triggering
-- ❌ **Frontend Pending**: Real-time job status monitoring interface
+1. **Workflow Integration**: Smooth navigation between Categories → Schedules → Jobs → Articles
+2. **Performance Optimization**: Fast loading for jobs with 1000+ articles using pagination
+3. **Real-time Updates**: Job status changes reflect across all relevant UI components
+4. **Error Handling**: Graceful degradation when articles or job data is unavailable
+5. **Mobile Responsiveness**: Basic functionality works on tablet/mobile devices
 
-**Integration Verification:**
-- **IV1**: Manual triggers use existing `trigger_category_crawl_task` Celery task ✅ **VERIFIED**
-- **IV2**: Existing worker containers process new jobs without issues ✅ **VERIFIED**
-- **IV3**: Job monitoring doesn't interfere với existing Celery Beat scheduled jobs ✅ **VERIFIED**
+## Implementation Sequence and Dependencies
 
-### ❌ Story 2.2: Articles Viewing Interface - **NOT STARTED**
-As an **Admin/Developer**,
-I want **to view articles that have been crawled**,
-so that **I can verify crawling results and monitor content quality**.
+**Phase 1 (Week 1-2)**: Story 2.1 - Enhanced Jobs Management
 
-**Acceptance Criteria:**
-1. Articles list view với pagination
-2. Filter by category và date range
-3. Search functionality across article titles/content
-4. Article detail view/modal
-5. Sort by crawl date, category, status
+- **Dependencies**: ✅ All foundation stories completed
+- **Deliverable**: Job-centric article viewing with priority management
+- **Value**: Immediate visibility into crawl results per job
 
-**Implementation Requirements:**
-- ❌ **Backend**: `/api/v1/articles` API endpoints (GET with filtering/pagination)
-- ❌ **Backend**: ArticleRepository method implementations
-- ❌ **Frontend**: Articles listing table with pagination
-- ❌ **Frontend**: Search and filter components
-- ❌ **Frontend**: Article detail modal/view
+**Phase 2 (Week 3-4)**: Story 2.2 - Integrated Category Scheduling
 
-**Integration Verification:**
-- **IV1**: May require new API endpoint `/api/v1/articles` - backend impact assessment needed ❌ **PENDING**
-- **IV2**: Article queries don't impact crawling performance ❌ **PENDING**
-- **IV3**: Large article datasets handled efficiently với pagination ❌ **PENDING**
+- **Dependencies**: Story 2.1 completion for job triggering validation
+- **Deliverable**: Schedule management within category interface
+- **Value**: Streamlined automation setup without context switching
 
-### ❌ Story 2.3: Job Scheduling Interface - **NOT STARTED**
-As an **Admin/Developer**,
-I want **to set up recurring crawl schedules for categories**,
-so that **I can automate crawling without manual intervention**.
+**Phase 3 (Week 5)**: Story 2.3 - Integration and Polish
 
-**Acceptance Criteria:**
-1. Schedule creation form với category selection
-2. Time interval configuration (1 minute, 5 minutes, 15 minutes, 30 minutes, 1 hour)
-3. Schedule activation/deactivation
-4. View existing schedules với next run times
-5. Integration với Celery Beat scheduler
+- **Dependencies**: Stories 2.1 and 2.2 completion
+- **Deliverable**: Unified, polished user experience
+- **Value**: Production-ready comprehensive management interface
 
-**Implementation Requirements:**
-- ❌ **Backend**: Dynamic Celery Beat scheduling API endpoints
-- ❌ **Backend**: Schedule configuration persistence and management
-- ❌ **Frontend**: Schedule creation form with interval configuration
-- ❌ **Frontend**: Schedule management table with activation/deactivation
-- ❌ **Frontend**: Next run time display and schedule monitoring
+**Success Metrics**:
 
-**Integration Verification:**
-- **IV1**: Schedules integrate với existing Celery Beat configuration ❌ **PENDING**
-- **IV2**: Existing scheduled tasks continue running unaffected ❌ **PENDING**
-- **IV3**: Schedule changes don't require container restarts ❌ **PENDING**
-
-## Updated Story Sequence Analysis
-
-**✅ COMPLETED DEPENDENCIES:**
-- ✅ Story 1.1 → 1.2 (Frontend environment → Categories UI) - **SATISFIED**
-- ✅ Story 1.2 Foundation → 2.1 (Categories exist → Manual crawl triggers) - **SATISFIED**
-
-**🔧 CURRENT STATUS:**
-- Story 2.1 (Manual Crawl Triggering): Backend ready, Frontend pending
-- Story 2.2 (Articles Interface): Can develop parallel, no blocking dependencies
-- Story 2.3 (Job Scheduling): Depends on Story 2.1 completion for validation
-
-**📋 RECOMMENDED NEXT STEPS:**
-1. **Priority 1**: Complete Story 2.1 Frontend (Manual job triggering UI)
-2. **Priority 2**: Implement Story 2.2 Backend (Articles API endpoints)
-3. **Priority 3**: Develop Story 2.2 Frontend (Articles viewing interface)
-4. **Priority 4**: Implement Story 2.3 (Job scheduling system)
-
-**Risk mitigation trong updated sequence:**
-- ✅ Each completed story delivers standalone value
-- ✅ Rollback possible tại any point without breaking existing functionality
-- ✅ Progressive complexity maintained from simple CRUD → job management → scheduling
-- 🔧 Hotfixes integrated without disrupting main story flow
+- ✅ Job-to-articles navigation completed in ≤ 2 clicks
+- ✅ High priority jobs execute within 5 seconds when workers available
+- ✅ Schedule configuration completed without leaving category management
+- ✅ Article viewing supports 1000+ articles with <2 second load times

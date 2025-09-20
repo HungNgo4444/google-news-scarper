@@ -77,6 +77,24 @@ class CreateCategoryRequest(BaseModel):
         description="Whether category is active for crawling",
         example=True
     )
+
+    language: str = Field(
+        "vi",
+        min_length=2,
+        max_length=5,
+        pattern="^[a-z]{2}(-[A-Z]{2})?$",
+        description="Language code for Google News search (e.g., 'vi', 'en', 'zh-CN')",
+        example="vi"
+    )
+
+    country: str = Field(
+        "VN",
+        min_length=2,
+        max_length=5,
+        pattern="^[A-Z]{2}$",
+        description="Country code for Google News search (e.g., 'VN', 'US', 'GB')",
+        example="VN"
+    )
     
     @validator('name')
     def validate_name(cls, v):
@@ -164,6 +182,24 @@ class UpdateCategoryRequest(BaseModel):
         None,
         description="New active status",
         example=True
+    )
+
+    language: Optional[str] = Field(
+        None,
+        min_length=2,
+        max_length=5,
+        pattern="^[a-z]{2}(-[A-Z]{2})?$",
+        description="Language code for Google News search (e.g., 'vi', 'en', 'zh-CN')",
+        example="vi"
+    )
+
+    country: Optional[str] = Field(
+        None,
+        min_length=2,
+        max_length=5,
+        pattern="^[A-Z]{2}$",
+        description="Country code for Google News search (e.g., 'VN', 'US', 'GB')",
+        example="VN"
     )
     
     @validator('name')
@@ -256,6 +292,18 @@ class CategoryResponse(BaseModel):
         ...,
         description="Whether category is active",
         example=True
+    )
+
+    language: str = Field(
+        "vi",
+        description="Language code for Google News search",
+        example="vi"
+    )
+
+    country: str = Field(
+        "VN",
+        description="Country code for Google News search",
+        example="VN"
     )
     
     created_at: datetime = Field(

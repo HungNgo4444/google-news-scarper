@@ -48,7 +48,7 @@ Example:
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 from uuid import UUID
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -1404,7 +1404,7 @@ class ArticleRepository(BaseRepository[Article]):
                     )
             
             return associations_created
-            
+
         except Exception as e:
             logger.error(
                 f"Failed to create category associations: {e}",
@@ -1414,3 +1414,152 @@ class ArticleRepository(BaseRepository[Article]):
                 }
             )
             raise
+
+    async def get_articles_paginated(
+        self,
+        filters: Optional[Dict[str, Any]] = None,
+        page: int = 1,
+        size: int = 20
+    ) -> Tuple[List[Article], int]:
+        """Get paginated articles with filtering support.
+
+        Args:
+            filters: Dictionary of filters to apply
+            page: Page number (1-based)
+            size: Number of articles per page
+
+        Returns:
+            Tuple of (articles_list, total_count)
+        """
+        async with get_db_session() as session:
+            # Build base query
+            query = select(Article)
+            count_query = select(func.count(Article.id))
+
+            # Apply filters if provided
+            if filters:
+                conditions = []
+
+                # Job ID filter
+                if 'job_id' in filters:
+                    conditions.append(Article.crawl_job_id == filters['job_id'])
+
+                # Category ID filter (requires join)
+                if 'category_id' in filters:
+                    query = query.join(ArticleCategory).join(Category)
+                    count_query = count_query.join(ArticleCategory).join(Category)
+                    conditions.append(Category.id == filters['category_id'])
+
+                # Search query (full-text search)
+                if 'search_query' in filters:
+                    search_term = f"%{filters['search_query']}%"
+                    conditions.append(
+                        func.or_(
+                            Article.title.ilike(search_term),
+                            Article.content.ilike(search_term)
+                        )
+                    )
+
+                # Keywords filter
+                if 'keywords' in filters and filters['keywords']:
+                    conditions.append(
+                        Article.keywords_matched.op('&&')(filters['keywords'])
+                    )
+
+                # Relevance score filter
+                if 'min_relevance_score' in filters:
+                    conditions.append(
+                        Article.relevance_score >= filters['min_relevance_score']
+                    )
+
+                # Date filters
+                if 'from_date' in filters:
+                    conditions.append(Article.publish_date >= filters['from_date'])
+                if 'to_date' in filters:
+                    conditions.append(Article.publish_date <= filters['to_date'])
+
+                # Apply all conditions
+                if conditions:
+                    filter_condition = and_(*conditions)
+                    query = query.where(filter_condition)
+                    count_query = count_query.where(filter_condition)
+
+            # Get total count
+            count_result = await session.execute(count_query)
+            total = count_result.scalar()
+
+            # Apply pagination and ordering
+            query = query.order_by(
+                Article.publish_date.desc().nullslast(),
+                Article.created_at.desc()
+            ).offset((page - 1) * size).limit(size)
+
+            # Execute query
+            result = await session.execute(query)
+            articles = result.scalars().all()
+
+            return list(articles), total
+
+    async def get_article_statistics(self) -> Dict[str, Any]:
+        """Get article statistics for analytics.
+
+        Returns:
+            Dictionary containing various article statistics
+        """
+        async with get_db_session() as session:
+            # Total articles count
+            total_result = await session.execute(
+                select(func.count(Article.id))
+            )
+            total_articles = total_result.scalar()
+
+            # Articles by job
+            job_stats_result = await session.execute(
+                select(
+                    Article.crawl_job_id,
+                    func.count(Article.id)
+                ).where(
+                    Article.crawl_job_id.is_not(None)
+                ).group_by(Article.crawl_job_id)
+            )
+            articles_by_job = {
+                str(job_id): count for job_id, count in job_stats_result
+            }
+
+            # Articles by category (through category associations)
+            category_stats_result = await session.execute(
+                select(
+                    Category.id,
+                    Category.name,
+                    func.count(ArticleCategory.article_id)
+                ).select_from(
+                    Category
+                ).join(ArticleCategory).group_by(Category.id, Category.name)
+            )
+            articles_by_category = {
+                f"{name} ({str(cat_id)})": count
+                for cat_id, name, count in category_stats_result
+            }
+
+            # Recent articles (last 24 hours)
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+            recent_result = await session.execute(
+                select(func.count(Article.id)).where(
+                    Article.created_at >= recent_cutoff
+                )
+            )
+            recent_articles_count = recent_result.scalar()
+
+            # Average relevance score
+            avg_relevance_result = await session.execute(
+                select(func.avg(Article.relevance_score))
+            )
+            avg_relevance = avg_relevance_result.scalar() or 0.0
+
+            return {
+                'total_articles': total_articles,
+                'articles_by_job': articles_by_job,
+                'articles_by_category': articles_by_category,
+                'recent_articles_count': recent_articles_count,
+                'average_relevance_score': float(avg_relevance)
+            }

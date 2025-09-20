@@ -38,6 +38,7 @@ celery_app.conf.update(
     # Task routing settings
     task_routes={
         "src.core.scheduler.tasks.crawl_category_task": {"queue": "crawl_queue"},
+        "src.core.scheduler.tasks.trigger_category_crawl_task": {"queue": "default"},
         "src.core.scheduler.tasks.cleanup_old_jobs_task": {"queue": "maintenance_queue"},
         "src.core.scheduler.tasks.monitor_job_health_task": {"queue": "maintenance_queue"},
     },

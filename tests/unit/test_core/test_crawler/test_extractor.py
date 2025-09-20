@@ -36,6 +36,11 @@ class TestArticleExtractor:
         settings.NEWSPAPER_KEEP_ARTICLE_HTML = True
         settings.NEWSPAPER_FETCH_IMAGES = True
         settings.NEWSPAPER_HTTP_SUCCESS_ONLY = True
+        # JavaScript rendering settings
+        settings.ENABLE_JAVASCRIPT_RENDERING = True
+        settings.PLAYWRIGHT_HEADLESS = True
+        settings.PLAYWRIGHT_TIMEOUT = 30
+        settings.PLAYWRIGHT_WAIT_TIME = 2.0
         return settings
     
     @pytest.fixture
@@ -408,3 +413,447 @@ class TestArticleExtractor:
         mock_article.top_image = ""
         result = extractor._extract_image_url(mock_article)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_javascript_rendering_disabled(self, extractor):
+        """Test JavaScript rendering when disabled in settings."""
+        # Disable JavaScript rendering
+        extractor.settings.ENABLE_JAVASCRIPT_RENDERING = False
+
+        test_url = "https://example.com/js-article"
+        correlation_id = "test-123"
+
+        result = await extractor._extract_with_javascript_rendering(test_url, correlation_id)
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_javascript_rendering_playwright_unavailable(self, extractor):
+        """Test JavaScript rendering when sync_playwright is not available."""
+        test_url = "https://example.com/js-article"
+        correlation_id = "test-123"
+
+        with patch('src.core.crawler.extractor.sync_playwright', None):
+            result = await extractor._extract_with_javascript_rendering(test_url, correlation_id)
+
+        assert result is None
+        extractor.logger.warning.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_javascript_rendering_success(self, extractor, mock_article):
+        """Test successful JavaScript rendering extraction."""
+        test_url = "https://example.com/js-article"
+        correlation_id = "test-123"
+
+        # Mock sync_playwright
+        mock_playwright = Mock()
+        mock_browser = Mock()
+        mock_page = Mock()
+
+        mock_playwright.chromium.launch.return_value = mock_browser
+        mock_browser.new_page.return_value = mock_page
+        mock_page.content.return_value = "<html><body>Rendered content</body></html>"
+
+        with patch('src.core.crawler.extractor.sync_playwright') as mock_sync_playwright, \
+             patch('src.core.crawler.extractor.Article') as MockArticle, \
+             patch('time.sleep'):
+
+            # Configure sync_playwright mock
+            mock_sync_playwright.return_value.__enter__.return_value = mock_playwright
+            mock_sync_playwright.return_value.__exit__.return_value = None
+
+            # Configure Article mock
+            mock_instance = MockArticle.return_value
+            mock_instance.set_html = Mock()
+            mock_instance.parse = Mock()
+            mock_instance.title = "JS Rendered Title"
+            mock_instance.text = "JavaScript rendered content with sufficient length for validation requirements."
+            mock_instance.authors = ["JS Author"]
+            mock_instance.publish_date = datetime(2023, 10, 15, 14, 30, 0)
+            mock_instance.top_image = "https://example.com/js-image.jpg"
+            mock_instance.meta_data = {}
+
+            result = await extractor._extract_with_javascript_rendering(test_url, correlation_id)
+
+        assert result is not None
+        assert result["title"] == "JS Rendered Title"
+        assert "JavaScript rendered content" in result["content"]
+        assert result["author"] == "JS Author"
+
+        # Verify JavaScript rendering was attempted
+        mock_playwright.chromium.launch.assert_called_once_with(headless=True)
+        mock_page.goto.assert_called_once_with(test_url)
+        mock_page.set_default_timeout.assert_called_once_with(30000)
+        mock_page.content.assert_called_once()
+        mock_browser.close.assert_called_once()
+
+        # Verify Article was configured with rendered HTML
+        mock_instance.set_html.assert_called_once_with("<html><body>Rendered content</body></html>")
+        mock_instance.parse.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_javascript_rendering_failure(self, extractor):
+        """Test JavaScript rendering failure scenarios."""
+        test_url = "https://example.com/js-error-article"
+        correlation_id = "test-123"
+
+        with patch('src.core.crawler.extractor.sync_playwright') as mock_sync_playwright:
+            # Simulate playwright failure
+            mock_sync_playwright.side_effect = Exception("Playwright browser launch failed")
+
+            result = await extractor._extract_with_javascript_rendering(test_url, correlation_id)
+
+        assert result is None
+        extractor.logger.error.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_fallback_to_javascript_rendering(self, extractor, mock_article):
+        """Test fallback to JavaScript rendering when standard extraction fails."""
+        test_url = "https://example.com/fallback-article"
+
+        with patch('src.core.crawler.extractor.Article') as MockArticle:
+            # Make standard extraction fail consistently
+            mock_instance = MockArticle.return_value
+            mock_instance.download = Mock(side_effect=Exception("Standard extraction failed"))
+
+            # Mock JavaScript rendering success
+            with patch.object(extractor, '_extract_with_javascript_rendering') as mock_js_extraction:
+                mock_js_extraction.return_value = {
+                    "title": "Fallback Success",
+                    "content": "Content extracted via JavaScript rendering fallback mechanism.",
+                    "author": "Fallback Author",
+                    "publish_date": None,
+                    "image_url": None,
+                    "source_url": test_url,
+                    "url_hash": "test-hash",
+                    "content_hash": "test-content-hash",
+                    "extracted_at": datetime.now()
+                }
+
+                result = await extractor.extract_article_metadata(test_url)
+
+        assert result is not None
+        assert result["title"] == "Fallback Success"
+        assert "JavaScript rendering fallback" in result["content"]
+
+        # Verify fallback was triggered
+        mock_js_extraction.assert_called_once()
+        # Check that fallback logging was called - the actual parameters may vary
+        assert any("Standard extraction failed, attempting JavaScript rendering fallback" in str(call)
+                   for call in extractor.logger.info.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_both_standard_and_javascript_rendering_fail(self, extractor):
+        """Test scenario where both standard extraction and JavaScript rendering fail."""
+        test_url = "https://example.com/total-failure-article"
+
+        with patch('src.core.crawler.extractor.Article') as MockArticle:
+            # Make standard extraction fail
+            mock_instance = MockArticle.return_value
+            mock_instance.download = Mock(side_effect=Exception("Standard extraction failed"))
+
+            # Make JavaScript rendering also fail
+            with patch.object(extractor, '_extract_with_javascript_rendering') as mock_js_extraction:
+                mock_js_extraction.side_effect = Exception("JavaScript rendering failed")
+
+                result = await extractor.extract_article_metadata(test_url)
+
+        assert result is None
+
+        # Verify both methods were attempted
+        mock_js_extraction.assert_called_once()
+        # Check that fallback failure logging was called
+        assert any("JavaScript rendering fallback also failed" in str(call)
+                   for call in extractor.logger.error.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_google_news_url_detection(self, extractor):
+        """Test Google News URL detection in extract_article_metadata."""
+        google_news_url = "https://news.google.com/articles/test123"
+
+        with patch.object(extractor, '_extract_google_news_with_playwright') as mock_google_news:
+            mock_google_news.return_value = {
+                "title": "Google News Article",
+                "content": "Content extracted from Google News URL",
+                "source_url": google_news_url,
+                "extraction_method": "google_news_playwright"
+            }
+
+            result = await extractor.extract_article_metadata(google_news_url)
+
+        assert result is not None
+        assert result["extraction_method"] == "google_news_playwright"
+        mock_google_news.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_extract_articles_batch_with_mixed_urls(self, extractor):
+        """Test batch extraction with mixed Google News and regular URLs."""
+        urls = [
+            "https://news.google.com/articles/test1",
+            "https://example.com/regular-article",
+            "https://news.google.com/articles/test2",
+            "https://another-site.com/news"
+        ]
+
+        with patch.object(extractor, '_extract_google_news_batch') as mock_google_batch, \
+             patch.object(extractor, 'extract_article_metadata') as mock_regular:
+
+            # Mock Google News batch results
+            mock_google_batch.return_value = [
+                {"title": "Google News 1", "extraction_method": "google_news_playwright"},
+                {"title": "Google News 2", "extraction_method": "google_news_playwright"}
+            ]
+
+            # Mock regular extraction results
+            mock_regular.side_effect = [
+                {"title": "Regular Article 1", "extraction_method": "standard"},
+                {"title": "Regular Article 2", "extraction_method": "standard"}
+            ]
+
+            results = await extractor.extract_articles_batch(urls)
+
+        assert len(results) == 4
+        mock_google_batch.assert_called_once()
+        assert mock_regular.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_extract_google_news_batch_processing(self, extractor):
+        """Test Google News batch processing with batches of 10."""
+        google_urls = [f"https://news.google.com/articles/test{i}" for i in range(25)]
+
+        with patch.object(extractor, '_process_batch_with_single_browser') as mock_process_batch, \
+             patch('asyncio.sleep') as mock_sleep:
+
+            # Mock batch processing results
+            mock_process_batch.side_effect = [
+                # First batch (10 URLs)
+                [{"title": f"Article {i}", "extraction_success": True} for i in range(10)],
+                # Second batch (10 URLs)
+                [{"title": f"Article {i}", "extraction_success": True} for i in range(10, 20)],
+                # Third batch (5 URLs)
+                [{"title": f"Article {i}", "extraction_success": True} for i in range(20, 25)]
+            ]
+
+            results = await extractor._extract_google_news_batch(google_urls)
+
+        assert len(results) == 25
+        assert mock_process_batch.call_count == 3
+        # Should have 2 delays between 3 batches
+        assert mock_sleep.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_batch_with_single_browser_success(self, extractor):
+        """Test single browser multi-tab processing success."""
+        test_urls = [f"https://news.google.com/articles/test{i}" for i in range(3)]
+
+        # Mock sync_playwright
+        mock_playwright = Mock()
+        mock_browser = Mock()
+        mock_pages = [Mock() for _ in range(3)]
+
+        mock_playwright.chromium.launch.return_value = mock_browser
+        mock_browser.new_page.side_effect = mock_pages
+
+        # Configure page mocks for successful redirects
+        for i, page in enumerate(mock_pages):
+            page.goto = AsyncMock()
+            page.route = AsyncMock()
+            page.set_extra_http_headers = Mock()
+            page.url = f"https://redirected-site{i}.com/article"
+            page.close = Mock()
+
+        with patch('src.core.crawler.extractor.sync_playwright') as mock_sync_playwright, \
+             patch.object(extractor, '_extract_with_newspaper') as mock_newspaper, \
+             patch('asyncio.sleep') as mock_sleep:
+
+            # Configure sync_playwright context manager
+            mock_sync_playwright.return_value.__enter__.return_value = mock_playwright
+            mock_sync_playwright.return_value.__exit__.return_value = None
+
+            # Mock newspaper extraction
+            mock_newspaper.side_effect = [
+                {"title": f"Article {i}", "extraction_success": True} for i in range(3)
+            ]
+
+            results = await extractor._process_batch_with_single_browser(test_urls)
+
+        assert len(results) == 3
+        assert all(result.get("extraction_method") == "google_news_playwright" for result in results)
+        mock_browser.close.assert_called_once()
+        # Should have 2 delays between 3 tabs
+        assert mock_sleep.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_batch_with_single_browser_no_redirect(self, extractor):
+        """Test handling of URLs that don't redirect from Google News."""
+        test_urls = ["https://news.google.com/articles/no-redirect"]
+
+        # Mock sync_playwright
+        mock_playwright = Mock()
+        mock_browser = Mock()
+        mock_page = Mock()
+
+        mock_playwright.chromium.launch.return_value = mock_browser
+        mock_browser.new_page.return_value = mock_page
+
+        # Configure page mock for no redirect (URL stays the same)
+        mock_page.goto = AsyncMock()
+        mock_page.route = AsyncMock()
+        mock_page.set_extra_http_headers = Mock()
+        mock_page.url = test_urls[0]  # Same URL = no redirect
+        mock_page.close = Mock()
+
+        with patch('src.core.crawler.extractor.sync_playwright') as mock_sync_playwright, \
+             patch('asyncio.sleep'):
+
+            # Configure sync_playwright context manager
+            mock_sync_playwright.return_value.__enter__.return_value = mock_playwright
+            mock_sync_playwright.return_value.__exit__.return_value = None
+
+            results = await extractor._process_batch_with_single_browser(test_urls)
+
+        assert len(results) == 1
+        assert results[0]["extraction_success"] == False
+        assert results[0]["extraction_error"] == "No redirect from Google News URL"
+        assert results[0]["extraction_method"] == "google_news_no_redirect"
+
+    @pytest.mark.asyncio
+    async def test_process_batch_with_single_browser_playwright_unavailable(self, extractor):
+        """Test batch processing when sync_playwright is not available."""
+        test_urls = ["https://news.google.com/articles/test1"]
+
+        with patch('src.core.crawler.extractor.sync_playwright', None):
+            results = await extractor._process_batch_with_single_browser(test_urls)
+
+        assert len(results) == 0
+        extractor.logger.error.assert_called_with("sync_playwright not available for Google News extraction")
+
+    @pytest.mark.asyncio
+    async def test_process_batch_browser_failure(self, extractor):
+        """Test handling of browser launch failure."""
+        test_urls = ["https://news.google.com/articles/test1", "https://news.google.com/articles/test2"]
+
+        with patch('src.core.crawler.extractor.sync_playwright') as mock_sync_playwright:
+            # Simulate browser failure
+            mock_playwright = Mock()
+            mock_playwright.chromium.launch.side_effect = Exception("Browser launch failed")
+            mock_sync_playwright.return_value.__enter__.return_value = mock_playwright
+            mock_sync_playwright.return_value.__exit__.return_value = None
+
+            results = await extractor._process_batch_with_single_browser(test_urls)
+
+        assert len(results) == 2
+        assert all(result["extraction_success"] == False for result in results)
+        assert all(result["extraction_method"] == "google_news_browser_failed" for result in results)
+
+    @pytest.mark.asyncio
+    async def test_process_batch_tab_failure(self, extractor):
+        """Test handling of individual tab failures."""
+        test_urls = ["https://news.google.com/articles/test1", "https://news.google.com/articles/test2"]
+
+        # Mock sync_playwright
+        mock_playwright = Mock()
+        mock_browser = Mock()
+        mock_page1 = Mock()
+        mock_page2 = Mock()
+
+        mock_playwright.chromium.launch.return_value = mock_browser
+        mock_browser.new_page.side_effect = [mock_page1, mock_page2]
+
+        # First tab fails, second succeeds
+        mock_page1.goto = AsyncMock(side_effect=Exception("Tab 1 failed"))
+        mock_page1.route = AsyncMock()
+        mock_page1.set_extra_http_headers = Mock()
+        mock_page1.close = Mock()
+
+        mock_page2.goto = AsyncMock()
+        mock_page2.route = AsyncMock()
+        mock_page2.set_extra_http_headers = Mock()
+        mock_page2.url = "https://redirected.com/article"
+        mock_page2.close = Mock()
+
+        with patch('src.core.crawler.extractor.sync_playwright') as mock_sync_playwright, \
+             patch.object(extractor, '_extract_with_newspaper') as mock_newspaper, \
+             patch('asyncio.sleep'):
+
+            mock_sync_playwright.return_value.__enter__.return_value = mock_playwright
+            mock_sync_playwright.return_value.__exit__.return_value = None
+
+            mock_newspaper.return_value = {"title": "Success", "extraction_success": True}
+
+            results = await extractor._process_batch_with_single_browser(test_urls)
+
+        assert len(results) == 2
+        assert results[0]["extraction_success"] == False
+        assert results[0]["extraction_method"] == "google_news_tab_failed"
+        assert results[1]["extraction_method"] == "google_news_playwright"
+
+    @pytest.mark.asyncio
+    async def test_anti_detection_delays(self, extractor):
+        """Test anti-detection delays between tabs and batches."""
+        test_urls = [f"https://news.google.com/articles/test{i}" for i in range(2)]
+
+        with patch('asyncio.sleep') as mock_sleep, \
+             patch('random.randint') as mock_randint:
+
+            mock_randint.return_value = 2  # Fixed delay for testing
+
+            # Test batch delay
+            await extractor._extract_google_news_batch(test_urls * 11)  # 22 URLs = 3 batches
+
+            # Should have delays between batches
+            batch_delay_calls = [call for call in mock_sleep.call_args_list if call[0][0] >= 5]
+            assert len(batch_delay_calls) >= 2  # At least 2 batch delays
+
+    @pytest.mark.asyncio
+    async def test_extract_google_news_with_playwright_single_url(self, extractor):
+        """Test single Google News URL extraction wrapper."""
+        test_url = "https://news.google.com/articles/test1"
+        correlation_id = "test-123"
+
+        with patch.object(extractor, '_process_batch_with_single_browser') as mock_batch:
+            mock_batch.return_value = [{
+                "title": "Test Article",
+                "extraction_success": True,
+                "final_redirected_url": "https://example.com/article"
+            }]
+
+            result = await extractor._extract_google_news_with_playwright(test_url, correlation_id)
+
+        assert result is not None
+        assert result["title"] == "Test Article"
+        mock_batch.assert_called_once_with([test_url])
+
+    @pytest.mark.asyncio
+    async def test_extract_with_newspaper_success(self, extractor, mock_article):
+        """Test newspaper extraction wrapper."""
+        test_url = "https://example.com/article"
+
+        with patch('src.core.crawler.extractor.Article') as MockArticle:
+            mock_instance = MockArticle.return_value
+            mock_instance.title = mock_article.title
+            mock_instance.text = mock_article.text
+            mock_instance.authors = mock_article.authors
+            mock_instance.publish_date = mock_article.publish_date
+            mock_instance.top_image = mock_article.top_image
+            mock_instance.meta_data = mock_article.meta_data
+
+            result = await extractor._extract_with_newspaper(test_url)
+
+        assert result is not None
+        assert result["extraction_success"] == True
+        assert result["title"] == "Test Article Title"
+
+    @pytest.mark.asyncio
+    async def test_extract_with_newspaper_failure(self, extractor):
+        """Test newspaper extraction wrapper failure."""
+        test_url = "https://example.com/failed-article"
+
+        with patch('src.core.crawler.extractor.Article') as MockArticle:
+            mock_instance = MockArticle.return_value
+            mock_instance.download = Mock(side_effect=Exception("Download failed"))
+
+            result = await extractor._extract_with_newspaper(test_url)
+
+        assert result is None
+        extractor.logger.error.assert_called()

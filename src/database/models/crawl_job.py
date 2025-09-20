@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 import uuid
 from sqlalchemy import String, Integer, DateTime, Text, CheckConstraint, Index, ForeignKey, Enum as SQLEnum
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -107,6 +107,11 @@ class CrawlJob(BaseModel):
     category: Mapped["Category"] = relationship(
         "Category",
         back_populates="crawl_jobs"
+    )
+
+    articles: Mapped[List["Article"]] = relationship(
+        "Article",
+        back_populates="crawl_job"
     )
     
     # Table constraints and indexes

@@ -622,6 +622,233 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                 query = query.where(CrawlJob.status == status)
             
             query = query.order_by(desc(CrawlJob.created_at)).limit(limit)
-            
+
             result = await session.execute(query)
             return list(result.scalars().all())
+
+    async def update_job_priority(
+        self,
+        job_id: UUID,
+        priority: int,
+        correlation_id: Optional[str] = None
+    ) -> CrawlJob:
+        """Update job priority with atomic operation.
+
+        Args:
+            job_id: Job UUID to update
+            priority: New priority value (0-10)
+            correlation_id: Optional correlation ID for tracking
+
+        Returns:
+            Updated CrawlJob instance
+
+        Raises:
+            ValueError: If job not found or update fails
+        """
+        async with get_db_session() as session:
+            async with session.begin():
+                try:
+                    # Get job for update (with row lock)
+                    result = await session.execute(
+                        select(CrawlJob)
+                        .where(CrawlJob.id == job_id)
+                        .with_for_update()
+                    )
+                    job = result.scalar_one_or_none()
+
+                    if not job:
+                        raise ValueError(f"Job with ID {job_id} not found")
+
+                    # Update priority and correlation_id
+                    job.priority = priority
+                    if correlation_id:
+                        job.correlation_id = correlation_id
+                    job.updated_at = datetime.now(timezone.utc)
+
+                    await session.flush()
+                    await session.refresh(job)
+
+                    logger.info(
+                        f"Updated job priority",
+                        extra={
+                            "job_id": str(job_id),
+                            "old_priority": job.priority if hasattr(job, '_old_priority') else 'unknown',
+                            "new_priority": priority,
+                            "correlation_id": correlation_id
+                        }
+                    )
+
+                    return job
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to update job priority: {e}",
+                        extra={
+                            "job_id": str(job_id),
+                            "priority": priority,
+                            "correlation_id": correlation_id
+                        }
+                    )
+                    raise
+
+    async def update_job(
+        self,
+        job_id: UUID,
+        updates: Dict[str, Any],
+        correlation_id: Optional[str] = None
+    ) -> CrawlJob:
+        """Update job configuration with validation.
+
+        Args:
+            job_id: Job UUID to update
+            updates: Dictionary of fields to update
+            correlation_id: Optional correlation ID for tracking
+
+        Returns:
+            Updated CrawlJob instance
+
+        Raises:
+            ValueError: If job not found, running, or update fails
+        """
+        async with get_db_session() as session:
+            async with session.begin():
+                try:
+                    # Get job for update (with row lock)
+                    result = await session.execute(
+                        select(CrawlJob)
+                        .where(CrawlJob.id == job_id)
+                        .with_for_update()
+                    )
+                    job = result.scalar_one_or_none()
+
+                    if not job:
+                        raise ValueError(f"Job with ID {job_id} not found")
+
+                    # Prevent editing running jobs
+                    if job.status == CrawlJobStatus.RUNNING:
+                        raise ValueError("Cannot update running job")
+
+                    # Apply updates
+                    valid_fields = {'priority', 'retry_count', 'job_metadata'}
+                    for field, value in updates.items():
+                        if field in valid_fields and value is not None:
+                            setattr(job, field, value)
+
+                    # Update metadata
+                    if correlation_id:
+                        job.correlation_id = correlation_id
+                    job.updated_at = datetime.now(timezone.utc)
+
+                    await session.flush()
+                    await session.refresh(job)
+
+                    logger.info(
+                        f"Updated job configuration",
+                        extra={
+                            "job_id": str(job_id),
+                            "updates": list(updates.keys()),
+                            "correlation_id": correlation_id
+                        }
+                    )
+
+                    return job
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to update job: {e}",
+                        extra={
+                            "job_id": str(job_id),
+                            "updates": updates,
+                            "correlation_id": correlation_id
+                        }
+                    )
+                    raise
+
+    async def delete_job(
+        self,
+        job_id: UUID,
+        force: bool = False,
+        delete_articles: bool = False,
+        correlation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Delete job with impact analysis.
+
+        Args:
+            job_id: Job UUID to delete
+            force: Force deletion even if job is running
+            delete_articles: Also delete associated articles
+            correlation_id: Optional correlation ID for tracking
+
+        Returns:
+            Dictionary with deletion impact information
+
+        Raises:
+            ValueError: If job not found or cannot be deleted
+        """
+        async with get_db_session() as session:
+            async with session.begin():
+                try:
+                    # Get job with related articles
+                    result = await session.execute(
+                        select(CrawlJob)
+                        .options(selectinload(CrawlJob.articles))
+                        .where(CrawlJob.id == job_id)
+                        .with_for_update()
+                    )
+                    job = result.scalar_one_or_none()
+
+                    if not job:
+                        raise ValueError(f"Job with ID {job_id} not found")
+
+                    # Check if job is running and force is not enabled
+                    if job.status == CrawlJobStatus.RUNNING and not force:
+                        raise ValueError("Cannot delete running job without force flag")
+
+                    # Count affected articles
+                    articles_count = len(job.articles) if hasattr(job, 'articles') else 0
+
+                    impact = {
+                        "articles_affected": articles_count,
+                        "articles_deleted": 0,
+                        "was_running": job.status == CrawlJobStatus.RUNNING
+                    }
+
+                    # Delete associated articles if requested
+                    if delete_articles and articles_count > 0:
+                        for article in job.articles:
+                            await session.delete(article)
+                        impact["articles_deleted"] = articles_count
+                    else:
+                        # Set crawl_job_id to NULL for associated articles
+                        if articles_count > 0:
+                            for article in job.articles:
+                                article.crawl_job_id = None
+
+                    # Delete the job
+                    await session.delete(job)
+                    await session.flush()
+
+                    logger.info(
+                        f"Deleted job",
+                        extra={
+                            "job_id": str(job_id),
+                            "force": force,
+                            "delete_articles": delete_articles,
+                            "articles_affected": articles_count,
+                            "correlation_id": correlation_id
+                        }
+                    )
+
+                    return impact
+
+                except Exception as e:
+                    logger.error(
+                        f"Failed to delete job: {e}",
+                        extra={
+                            "job_id": str(job_id),
+                            "force": force,
+                            "delete_articles": delete_articles,
+                            "correlation_id": correlation_id
+                        }
+                    )
+                    raise

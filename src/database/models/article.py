@@ -1,7 +1,9 @@
 from datetime import datetime
 from typing import Optional, List
 import hashlib
-from sqlalchemy import String, Text, DateTime, CheckConstraint, Index
+import uuid
+from sqlalchemy import String, Text, DateTime, CheckConstraint, Index, ForeignKey, Float
+from sqlalchemy.dialects.postgresql import UUID, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .base import BaseModel
 
@@ -60,12 +62,39 @@ class Article(BaseModel):
         default=lambda: datetime.now(),
         index=True
     )
-    
+
+    # Job tracking for article-job association
+    crawl_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("crawl_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True
+    )
+
+    # Article metadata for job-centric functionality
+    keywords_matched: Mapped[Optional[List[str]]] = mapped_column(
+        ARRAY(String),
+        nullable=True,
+        default=list
+    )
+
+    relevance_score: Mapped[float] = mapped_column(
+        Float,
+        nullable=False,
+        default=0.0,
+        index=True
+    )
+
     # Relationships
     categories: Mapped[List["ArticleCategory"]] = relationship(
         "ArticleCategory",
         back_populates="article",
         cascade="all, delete-orphan"
+    )
+
+    crawl_job: Mapped[Optional["CrawlJob"]] = relationship(
+        "CrawlJob",
+        back_populates="articles"
     )
     
     # Table constraints
@@ -73,11 +102,15 @@ class Article(BaseModel):
         CheckConstraint("length(trim(title)) > 0", name="title_not_empty"),
         CheckConstraint("length(url_hash) = 64", name="valid_url_hash"),
         CheckConstraint("content_hash IS NULL OR length(content_hash) = 64", name="valid_content_hash"),
+        CheckConstraint("relevance_score >= 0.0 AND relevance_score <= 1.0", name="valid_relevance_score"),
         Index("idx_articles_created_at", "created_at"),
         Index("idx_articles_publish_date_desc", "publish_date", postgresql_using="btree"),
         Index("idx_articles_last_seen", "last_seen"),
         Index("idx_articles_title_gin", "title", postgresql_using="gin", postgresql_ops={"title": "gin_trgm_ops"}),
         Index("idx_articles_content_gin", "content", postgresql_using="gin", postgresql_ops={"content": "gin_trgm_ops"}),
+        Index("idx_articles_crawl_job_id", "crawl_job_id"),
+        Index("idx_articles_keywords_matched_gin", "keywords_matched", postgresql_using="gin"),
+        Index("idx_articles_relevance_score", "relevance_score"),
     )
     
     @staticmethod

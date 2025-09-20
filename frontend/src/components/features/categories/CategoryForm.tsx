@@ -20,7 +20,9 @@ export function CategoryForm({
     name: '',
     keywords: [] as string[],
     exclude_keywords: [] as string[],
-    is_active: true
+    is_active: true,
+    language: 'vi',
+    country: 'VN'
   });
   
   const [keywordsInput, setKeywordsInput] = useState('');
@@ -34,7 +36,9 @@ export function CategoryForm({
         name: initialData.name,
         keywords: initialData.keywords,
         exclude_keywords: initialData.exclude_keywords,
-        is_active: initialData.is_active
+        is_active: initialData.is_active,
+        language: initialData.language || 'vi',
+        country: initialData.country || 'VN'
       });
       setKeywordsInput(initialData.keywords.join(', '));
       setExcludeKeywordsInput(initialData.exclude_keywords.join(', '));
@@ -43,7 +47,9 @@ export function CategoryForm({
         name: '',
         keywords: [],
         exclude_keywords: [],
-        is_active: true
+        is_active: true,
+        language: 'vi',
+        country: 'VN'
       });
       setKeywordsInput('');
       setExcludeKeywordsInput('');
@@ -198,6 +204,58 @@ export function CategoryForm({
             />
             <div className="text-xs text-gray-500 mt-1">
               Articles containing these words will be excluded. Current: {formData.exclude_keywords.length} keyword(s)
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label htmlFor="language" className="block text-sm font-medium text-gray-700 mb-1">
+                Language *
+              </label>
+              <select
+                id="language"
+                value={formData.language}
+                onChange={(e) => setFormData(prev => ({ ...prev, language: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="vi">Vietnamese</option>
+                <option value="en">English</option>
+                <option value="zh">Chinese</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="th">Thai</option>
+                <option value="id">Indonesian</option>
+                <option value="ms">Malay</option>
+              </select>
+              <div className="text-xs text-gray-500 mt-1">
+                Language for Google News search
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="country" className="block text-sm font-medium text-gray-700 mb-1">
+                Country *
+              </label>
+              <select
+                id="country"
+                value={formData.country}
+                onChange={(e) => setFormData(prev => ({ ...prev, country: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="VN">Vietnam</option>
+                <option value="US">United States</option>
+                <option value="GB">United Kingdom</option>
+                <option value="CN">China</option>
+                <option value="JP">Japan</option>
+                <option value="KR">South Korea</option>
+                <option value="TH">Thailand</option>
+                <option value="ID">Indonesia</option>
+                <option value="MY">Malaysia</option>
+                <option value="SG">Singapore</option>
+              </select>
+              <div className="text-xs text-gray-500 mt-1">
+                Country region for Google News
+              </div>
             </div>
           </div>
 

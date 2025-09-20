@@ -9,6 +9,7 @@ class ErrorCode(str, Enum):
     # Business logic errors
     CATEGORY_NOT_FOUND = "CATEGORY_NOT_FOUND"
     CATEGORY_VALIDATION_FAILED = "CATEGORY_VALIDATION_FAILED"
+    JOB_NOT_FOUND = "JOB_NOT_FOUND"
     INVALID_KEYWORDS = "INVALID_KEYWORDS"
     
     # External service errors
@@ -100,9 +101,22 @@ class DuplicateCategoryNameError(CategoryValidationError):
         )
 
 
+class JobNotFoundException(BusinessLogicError):
+    """Raised when a job is not found."""
+
+    def __init__(self, job_id: str, details: Optional[Dict[str, Any]] = None):
+        message = f"Job not found: {job_id}"
+        super().__init__(
+            code=ErrorCode.JOB_NOT_FOUND,
+            message=message,
+            details=details or {"job_id": job_id},
+            retryable=False
+        )
+
+
 class InvalidKeywordsError(BusinessLogicError):
     """Raised when keywords are invalid."""
-    
+
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(
             code=ErrorCode.INVALID_KEYWORDS,

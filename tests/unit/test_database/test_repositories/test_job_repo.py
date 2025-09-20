@@ -5,13 +5,14 @@ job status tracking, statistics, and cleanup functionality.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from datetime import datetime, timezone, timedelta
 from uuid import uuid4, UUID
 
 from src.database.repositories.job_repo import CrawlJobRepository
 from src.database.models.crawl_job import CrawlJob, CrawlJobStatus
 from src.database.models.category import Category
+from src.database.models.article import Article
 
 
 @pytest.fixture
@@ -454,3 +455,262 @@ class TestJobRepositoryIntegration:
         # This would test concurrent access patterns
         # For now, it's a placeholder requiring actual database setup
         pass
+
+
+@pytest.mark.asyncio
+class TestJobRepositoryEnhanced:
+    """Tests for enhanced job repository functionality (Story 2.1)."""
+
+    @pytest.fixture
+    def job_repo(self):
+        """Create JobRepository instance for testing."""
+        return CrawlJobRepository()
+
+    @pytest.fixture
+    def sample_articles(self):
+        """Create sample articles for job association testing."""
+        articles = []
+        for i in range(5):
+            article = Mock()
+            article.id = uuid4()
+            article.title = f"Test Article {i+1}"
+            article.source_url = f"https://example.com/article{i+1}"
+            article.crawl_job_id = None
+            articles.append(article)
+        return articles
+
+    async def test_update_job_priority_success(self, job_repo, sample_job):
+        """Test successful job priority update."""
+        # Mock the database session and job retrieval
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Mock job retrieval
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = sample_job
+            mock_session.execute.return_value = mock_result
+
+            # Test priority update
+            updated_job = await job_repo.update_job_priority(
+                job_id=sample_job.id,
+                priority=8,
+                correlation_id="test-correlation"
+            )
+
+            # Verify job was updated
+            assert sample_job.priority == 8
+            assert sample_job.correlation_id == "test-correlation"
+            mock_session.flush.assert_called_once()
+            mock_session.refresh.assert_called_once_with(sample_job)
+
+    async def test_update_job_priority_not_found(self, job_repo):
+        """Test job priority update with non-existent job."""
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Mock job not found
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = None
+            mock_session.execute.return_value = mock_result
+
+            # Test should raise ValueError
+            with pytest.raises(ValueError, match="Job with ID .* not found"):
+                await job_repo.update_job_priority(
+                    job_id=uuid4(),
+                    priority=8
+                )
+
+    async def test_update_job_success(self, job_repo, sample_job):
+        """Test successful job configuration update."""
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Mock job retrieval
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = sample_job
+            mock_session.execute.return_value = mock_result
+
+            # Test job update
+            updates = {
+                'priority': 5,
+                'retry_count': 3,
+                'job_metadata': {'source': 'test', 'urgent': True}
+            }
+
+            updated_job = await job_repo.update_job(
+                job_id=sample_job.id,
+                updates=updates,
+                correlation_id="test-correlation"
+            )
+
+            # Verify job was updated
+            assert sample_job.priority == 5
+            assert sample_job.retry_count == 3
+            assert sample_job.job_metadata == {'source': 'test', 'urgent': True}
+            assert sample_job.correlation_id == "test-correlation"
+            mock_session.flush.assert_called_once()
+            mock_session.refresh.assert_called_once_with(sample_job)
+
+    async def test_update_job_running_blocked(self, job_repo, sample_job):
+        """Test job update blocked when job is running."""
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Set job as running
+            sample_job.status = CrawlJobStatus.RUNNING
+
+            # Mock job retrieval
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = sample_job
+            mock_session.execute.return_value = mock_result
+
+            # Test should raise ValueError
+            with pytest.raises(ValueError, match="Cannot update running job"):
+                await job_repo.update_job(
+                    job_id=sample_job.id,
+                    updates={'priority': 5}
+                )
+
+    async def test_delete_job_success_with_articles(self, job_repo, sample_job, sample_articles):
+        """Test successful job deletion with associated articles."""
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Associate articles with job
+            sample_job.articles = sample_articles
+            for article in sample_articles:
+                article.crawl_job_id = sample_job.id
+
+            # Mock job retrieval with articles
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = sample_job
+            mock_session.execute.return_value = mock_result
+
+            # Test job deletion without deleting articles
+            impact = await job_repo.delete_job(
+                job_id=sample_job.id,
+                force=False,
+                delete_articles=False,
+                correlation_id="test-correlation"
+            )
+
+            # Verify impact analysis
+            assert impact['articles_affected'] == 5
+            assert impact['articles_deleted'] == 0
+            assert impact['was_running'] == False
+
+            # Verify articles had crawl_job_id set to None
+            for article in sample_articles:
+                assert article.crawl_job_id is None
+
+            # Verify job was deleted
+            mock_session.delete.assert_called_once_with(sample_job)
+            mock_session.flush.assert_called_once()
+
+    async def test_delete_job_with_article_deletion(self, job_repo, sample_job, sample_articles):
+        """Test job deletion with article deletion enabled."""
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Associate articles with job
+            sample_job.articles = sample_articles
+
+            # Mock job retrieval with articles
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = sample_job
+            mock_session.execute.return_value = mock_result
+
+            # Test job deletion with article deletion
+            impact = await job_repo.delete_job(
+                job_id=sample_job.id,
+                force=False,
+                delete_articles=True,
+                correlation_id="test-correlation"
+            )
+
+            # Verify impact analysis
+            assert impact['articles_affected'] == 5
+            assert impact['articles_deleted'] == 5
+            assert impact['was_running'] == False
+
+            # Verify articles were deleted
+            assert mock_session.delete.call_count == 6  # 5 articles + 1 job
+
+    async def test_delete_running_job_blocked(self, job_repo, sample_job):
+        """Test deletion blocked for running job without force flag."""
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Set job as running
+            sample_job.status = CrawlJobStatus.RUNNING
+            sample_job.articles = []
+
+            # Mock job retrieval
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = sample_job
+            mock_session.execute.return_value = mock_result
+
+            # Test should raise ValueError
+            with pytest.raises(ValueError, match="Cannot delete running job without force flag"):
+                await job_repo.delete_job(
+                    job_id=sample_job.id,
+                    force=False
+                )
+
+    async def test_delete_running_job_with_force(self, job_repo, sample_job):
+        """Test forced deletion of running job."""
+        with patch('src.database.repositories.job_repo.get_db_session') as mock_get_session:
+            mock_session = AsyncMock()
+            mock_get_session.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_get_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            mock_session.begin.return_value.__aenter__ = AsyncMock()
+            mock_session.begin.return_value.__aexit__ = AsyncMock()
+
+            # Set job as running
+            sample_job.status = CrawlJobStatus.RUNNING
+            sample_job.articles = []
+
+            # Mock job retrieval
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = sample_job
+            mock_session.execute.return_value = mock_result
+
+            # Test forced deletion should succeed
+            impact = await job_repo.delete_job(
+                job_id=sample_job.id,
+                force=True
+            )
+
+            # Verify impact analysis shows was running
+            assert impact['was_running'] == True
+
+            # Verify job was deleted
+            mock_session.delete.assert_called_once_with(sample_job)

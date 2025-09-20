@@ -1,0 +1,245 @@
+"""Sync crawler engine for Celery tasks.
+
+Uses synchronous operations and newspaper4k built-in threading
+to avoid event loop conflicts in Celery workers.
+"""
+
+import logging
+import sys
+import os
+from typing import List, Dict, Any, Optional
+from uuid import UUID, uuid4
+from datetime import datetime, timezone
+
+# Add newspaper4k-master to path
+newspaper_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'newspaper4k-master')
+if os.path.exists(newspaper_path):
+    sys.path.insert(0, newspaper_path)
+
+try:
+    from newspaper.google_news import GoogleNewsSource
+    from newspaper.mthreading import fetch_news
+    from newspaper import Article
+except ImportError as e:
+    GoogleNewsSource = None
+    fetch_news = None
+    Article = None
+    print(f"Warning: newspaper4k imports failed: {e}")
+
+from src.shared.config import Settings
+from src.shared.exceptions import (
+    CrawlerError,
+    GoogleNewsUnavailableError,
+    ExtractionError
+)
+
+logger = logging.getLogger(__name__)
+
+
+class SyncCrawlerEngine:
+    """Sync crawler engine for Celery workers.
+
+    Uses newspaper4k threading and synchronous operations
+    to avoid async/await conflicts.
+    """
+
+    def __init__(self, settings: Settings, logger: logging.Logger):
+        self.settings = settings
+        self.logger = logger
+
+        # Validate dependencies
+        if not GoogleNewsSource:
+            raise CrawlerError("GoogleNewsSource not available - check newspaper4k installation")
+        if not fetch_news:
+            raise CrawlerError("fetch_news not available - check newspaper4k installation")
+
+    def search_google_news(
+        self,
+        keywords: List[str],
+        exclude_keywords: List[str] = None,
+        max_results: int = 100,
+        language: str = "en",
+        country: str = "US"
+    ) -> List[str]:
+        """Search Google News using sync operations.
+
+        Args:
+            keywords: List of keywords to search for (OR logic)
+            exclude_keywords: List of keywords to exclude from results
+            max_results: Maximum number of results to return
+            language: Language code for search results
+            country: Country code for search results
+
+        Returns:
+            List of article URLs found in search results
+
+        Raises:
+            GoogleNewsUnavailableError: If search fails
+        """
+        if not keywords:
+            raise GoogleNewsUnavailableError("Keywords list cannot be empty")
+
+        try:
+            # Build search query with OR logic for keywords
+            search_query = " OR ".join(f'"{keyword}"' for keyword in keywords)
+
+            # Add exclusions if provided
+            if exclude_keywords:
+                exclusions = " ".join(f'-"{keyword}"' for keyword in exclude_keywords)
+                search_query = f"{search_query} {exclusions}"
+
+            self.logger.info(f"Searching Google News with query: {search_query}")
+
+            # Use GNews directly instead of GoogleNewsSource
+            # GoogleNewsSource has URL parsing issues
+            import gnews
+
+            gn = gnews.GNews(
+                language=language.lower(),
+                country=country,
+                max_results=max_results
+            )
+
+            # Search using GNews directly
+            search_results = gn.get_news(search_query)
+
+            if not search_results:
+                self.logger.warning(f"No results found for query: {search_query}")
+                return []
+
+            # Extract URLs from GNews results
+            article_urls = []
+            for result in search_results:
+                if 'url' in result and result['url']:
+                    # GNews returns Google News URLs, need to extract real URLs
+                    # For now, use the Google News URLs directly
+                    article_urls.append(result['url'])
+
+            # Log some sample results for debugging
+            if search_results:
+                sample = search_results[0]
+                self.logger.info(f"Sample result: {sample.get('title', 'No title')}")
+                self.logger.info(f"Sample URL: {sample.get('url', 'No URL')[:100]}...")
+
+            self.logger.info(f"Found {len(article_urls)} article URLs")
+            return article_urls
+
+        except Exception as e:
+            error_msg = f"Failed to search Google News: {str(e)}"
+            self.logger.error(error_msg)
+            raise GoogleNewsUnavailableError(error_msg) from e
+
+    def extract_articles_with_threading(
+        self,
+        urls: List[str],
+        threads: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Extract articles using newspaper4k threading.
+
+        Args:
+            urls: List of article URLs to extract
+            threads: Number of threads to use for extraction
+
+        Returns:
+            List of extracted article data
+
+        Raises:
+            ExtractionError: If extraction fails
+        """
+        if not urls:
+            return []
+
+        try:
+            self.logger.info(f"Extracting {len(urls)} articles with {threads} threads")
+
+            # Create Article objects for URLs
+            articles = [Article(url) for url in urls]
+
+            # Use newspaper4k threading to download and parse
+            processed_articles = fetch_news(articles, threads=threads)
+
+            # Convert to our format
+            extracted_data = []
+            for article in processed_articles:
+                try:
+                    # Basic validation
+                    if not article.title or not article.text:
+                        continue
+
+                    article_data = {
+                        'url': article.url,
+                        'title': article.title,
+                        'content': article.text,
+                        'summary': article.summary if hasattr(article, 'summary') else None,
+                        'authors': list(article.authors) if article.authors else [],
+                        'publish_date': article.publish_date,
+                        'top_image': article.top_image,
+                        'meta_keywords': article.meta_keywords if hasattr(article, 'meta_keywords') else [],
+                        'extracted_at': datetime.now(timezone.utc),
+                        'word_count': len(article.text.split()) if article.text else 0
+                    }
+
+                    extracted_data.append(article_data)
+
+                except Exception as e:
+                    self.logger.warning(f"Failed to process article {article.url}: {e}")
+                    continue
+
+            self.logger.info(f"Successfully extracted {len(extracted_data)} articles")
+            return extracted_data
+
+        except Exception as e:
+            error_msg = f"Failed to extract articles: {str(e)}"
+            self.logger.error(error_msg)
+            raise ExtractionError(error_msg) from e
+
+    def crawl_category_sync(self, category: Any) -> List[Dict[str, Any]]:
+        """Crawl articles for a category using sync operations.
+
+        Args:
+            category: Category model instance with keywords
+
+        Returns:
+            List of extracted article data
+
+        Raises:
+            CrawlerError: For general crawler failures
+        """
+        try:
+            self.logger.info(f"Starting sync crawl for category: {category.name}")
+
+            # Step 1: Search Google News with category-specific language/country
+            max_results = getattr(self.settings, 'MAX_RESULTS_PER_SEARCH', 100)
+
+            # Use category-specific language and country, fallback to defaults
+            language = getattr(category, 'language', 'vi')
+            country = getattr(category, 'country', 'VN')
+
+            self.logger.info(f"Searching with language='{language}', country='{country}' for category: {category.name}")
+
+            article_urls = self.search_google_news(
+                keywords=category.keywords,
+                exclude_keywords=category.exclude_keywords or [],
+                max_results=max_results,
+                language=language,
+                country=country
+            )
+
+            if not article_urls:
+                self.logger.warning(f"No articles found for category: {category.name}")
+                return []
+
+            # Step 2: Extract articles using threading
+            threads = getattr(self.settings, 'EXTRACTION_THREADS', 5)
+            extracted_articles = self.extract_articles_with_threading(
+                urls=article_urls,
+                threads=threads
+            )
+
+            self.logger.info(f"Crawled {len(extracted_articles)} articles for category: {category.name}")
+            return extracted_articles
+
+        except Exception as e:
+            error_msg = f"Failed to crawl category {category.name}: {str(e)}"
+            self.logger.error(error_msg)
+            raise CrawlerError(error_msg) from e

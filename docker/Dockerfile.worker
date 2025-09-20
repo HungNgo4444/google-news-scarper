@@ -12,7 +12,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_DEFAULT_TIMEOUT=100 \
     C_FORCE_ROOT=1
 
-# Install system dependencies required for web crawling
+# Install system dependencies required for web crawling and Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
@@ -21,6 +21,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjpeg-dev \
     libpng-dev \
     libffi-dev \
+    wget \
+    # Playwright dependencies
+    libglib2.0-0 \
+    libnss3 \
+    libnspr4 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libgbm1 \
+    libxss1 \
+    libasound2 \
+    libxfixes3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
@@ -42,14 +57,29 @@ COPY --chown=worker:worker requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir --user -r requirements.txt
 
+# Install Playwright globally and system dependencies
+USER root
+RUN pip install --no-cache-dir playwright && \
+    playwright install-deps chromium && \
+    playwright install chromium && \
+    playwright install chromium-headless-shell
+
+# Switch back to worker user
+USER worker
+
 # Stage 3: Production worker image
 FROM base as production
 
 # Set working directory
 WORKDIR /app
 
-# Copy Python dependencies from dependencies stage
+# Copy Python dependencies and Playwright from dependencies stage
 COPY --from=dependencies /home/worker/.local /home/worker/.local
+COPY --from=dependencies /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=dependencies /usr/local/bin/playwright /usr/local/bin/playwright
+
+# Copy Playwright browsers - fix the ownership and path
+COPY --from=dependencies --chown=worker:worker /root/.cache/ms-playwright /home/worker/.cache/ms-playwright
 
 # Copy application source code
 COPY src/ ./src/
@@ -70,6 +100,9 @@ ENV PATH=/home/worker/.local/bin:$PATH
 
 # Set Python path to include the application source
 ENV PYTHONPATH=/app:/app/src:/app/newspaper4k-master
+
+# Playwright browser path for worker user
+ENV PLAYWRIGHT_BROWSERS_PATH=/home/worker/.cache/ms-playwright
 
 # Celery-specific environment variables
 ENV CELERY_WORKER_CONCURRENCY=4 \

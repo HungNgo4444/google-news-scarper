@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { JobsService } from '../../../services/jobsService';
 import { CategoriesService } from '../../../services/categoriesService';
 import type { JobResponse, Category } from '../../../types/shared';
+import JobActionButtons from './JobActionButtons';
+import JobArticlesModal from './JobArticlesModal';
+import JobEditModal from './JobEditModal';
 
 const STATUS_COLORS = {
   pending: 'text-yellow-600 bg-yellow-50 border-yellow-200',
@@ -26,6 +29,12 @@ export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Modal states
+  const [selectedJobForArticles, setSelectedJobForArticles] = useState<JobResponse | null>(null);
+  const [isArticlesModalOpen, setIsArticlesModalOpen] = useState(false);
+  const [selectedJobForEdit, setSelectedJobForEdit] = useState<JobResponse | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>('');
@@ -73,6 +82,32 @@ export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
 
   const handleRefresh = () => {
     loadJobs();
+  };
+
+  // Handler functions for JobActionButtons
+  const handleJobUpdated = (updatedJob: JobResponse) => {
+    setJobs(prevJobs =>
+      prevJobs.map(job =>
+        job.id === updatedJob.id ? updatedJob : job
+      )
+    );
+  };
+
+  const handleJobDeleted = (jobId: string) => {
+    setJobs(prevJobs => prevJobs.filter(job => job.id !== jobId));
+  };
+
+  const handleViewArticles = (jobId: string) => {
+    const job = jobs.find(j => j.id === jobId);
+    if (job) {
+      setSelectedJobForArticles(job);
+      setIsArticlesModalOpen(true);
+    }
+  };
+
+  const handleEditJob = (job: JobResponse) => {
+    setSelectedJobForEdit(job);
+    setIsEditModalOpen(true);
   };
 
   const formatDateTime = (dateString: string | null) => {
@@ -208,6 +243,9 @@ export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Duration
                   </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -237,6 +275,15 @@ export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
                         {formatDuration(job.started_at, job.completed_at)}
                       </div>
                     </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <JobActionButtons
+                        job={job}
+                        onJobUpdated={handleJobUpdated}
+                        onJobDeleted={handleJobDeleted}
+                        onViewArticles={handleViewArticles}
+                        onEditJob={handleEditJob}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -245,6 +292,27 @@ export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
 
         </>
       )}
+
+      {/* Articles Modal */}
+      <JobArticlesModal
+        job={selectedJobForArticles}
+        isOpen={isArticlesModalOpen}
+        onClose={() => {
+          setIsArticlesModalOpen(false);
+          setSelectedJobForArticles(null);
+        }}
+      />
+
+      {/* Edit Job Modal */}
+      <JobEditModal
+        job={selectedJobForEdit}
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setSelectedJobForEdit(null);
+        }}
+        onJobUpdated={handleJobUpdated}
+      />
     </div>
   );
 }

@@ -61,95 +61,97 @@ logger = get_task_logger(__name__)
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
 def crawl_category_task(self, category_id: str, job_id: str) -> Dict[str, Any]:
     """Execute crawl for specific category with comprehensive error handling.
-    
+
     This is the main background task for crawling articles from a category.
-    It includes comprehensive error handling, status tracking, and metrics collection.
-    
+    It uses sync operations and newspaper4k built-in threading for better compatibility.
+
     Args:
         category_id: UUID string of the category to crawl
         job_id: UUID string of the CrawlJob tracking this execution
-        
+
     Returns:
         Dictionary containing execution results and metrics
-        
+
     Raises:
         CrawlerError: For crawler-specific errors
         Exception: For general execution errors
     """
     correlation_id = f"job_{job_id}_{self.request.id}"
     settings = get_settings()
-    
-    logger.info("Starting crawl task", extra={
+
+    logger.info("Starting sync crawl task", extra={
         "correlation_id": correlation_id,
         "category_id": category_id,
         "job_id": job_id,
         "task_id": self.request.id,
         "retry_count": self.request.retries
     })
-    
-    # Convert to async and run the crawl operation
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(_async_crawl_category_task(
-            self, category_id, job_id, correlation_id, settings
-        ))
-    finally:
-        loop.close()
+
+    # Use sync operations - no more async/await conflicts!
+    return _sync_crawl_category_task(
+        self, category_id, job_id, correlation_id, settings
+    )
 
 
-async def _async_crawl_category_task(
+def _sync_crawl_category_task(
     task_instance,
     category_id: str,
     job_id: str,
     correlation_id: str,
     settings
 ) -> Dict[str, Any]:
-    """Async implementation of the category crawl task.
-    
+    """Sync implementation of the category crawl task.
+
+    Uses sync database operations and newspaper4k threading
+    to avoid event loop conflicts in Celery workers.
+
     Args:
         task_instance: Celery task instance for retry handling
         category_id: Category UUID string
         job_id: Job UUID string
         correlation_id: Unique correlation ID for tracking
         settings: Application settings
-        
+
     Returns:
         Task execution results
     """
-    job_repo = CrawlJobRepository()
-    
+    from src.database.repositories.sync_job_repo import SyncCrawlJobRepository
+    from src.database.repositories.sync_category_repo import SyncCategoryRepository
+    from src.core.crawler.sync_engine import SyncCrawlerEngine
+
+    job_repo = SyncCrawlJobRepository()
+
     try:
         # Update job status to running
-        await job_repo.update_status(
+        job_repo.update_status(
             job_id=UUID(job_id),
             status=CrawlJobStatus.RUNNING,
             started_at=datetime.now(timezone.utc),
             celery_task_id=task_instance.request.id,
             correlation_id=correlation_id
         )
-        
+
         # Get category and validate
-        category_repo = CategoryRepository()
-        category = await category_repo.get_by_id(UUID(category_id))
-        
+        category_repo = SyncCategoryRepository()
+        category = category_repo.get_by_id(UUID(category_id))
+
         if not category:
             error_msg = f"Category {category_id} not found"
             logger.error(error_msg, extra={"correlation_id": correlation_id})
-            
-            await job_repo.update_status(
+
+            job_repo.update_status(
                 job_id=UUID(job_id),
-                status="failed",
+                status=CrawlJobStatus.FAILED,
                 error_message=error_msg,
                 completed_at=datetime.now(timezone.utc)
             )
             return {"status": "failed", "error": error_msg}
-        
+
         if not category.is_active:
             error_msg = f"Category {category.name} is not active"
             logger.warning(error_msg, extra={"correlation_id": correlation_id})
-            
-            await job_repo.update_status(
+
+            job_repo.update_status(
                 job_id=UUID(job_id),
                 status=CrawlJobStatus.COMPLETED,  # Not an error, just skipped
                 error_message=error_msg,
@@ -158,46 +160,44 @@ async def _async_crawl_category_task(
                 articles_saved=0
             )
             return {"status": "skipped", "reason": error_msg}
-        
-        # Initialize crawler dependencies
-        article_repo = ArticleRepository()
-        article_extractor = ArticleExtractor(
+
+        # Create sync crawler engine
+        sync_crawler = SyncCrawlerEngine(
             settings=settings,
             logger=logger
         )
-        
-        # Create crawler engine with job tracking
-        crawler = CrawlerEngine(
-            settings=settings,
-            logger=logger,
-            article_extractor=article_extractor,
-            article_repo=article_repo
-        )
-        
-        # Execute crawl with enhanced tracking
-        articles_found, articles_saved = await _execute_crawl_with_tracking(
-            crawler=crawler,
-            category=category,
-            job_id=UUID(job_id),
-            correlation_id=correlation_id
-        )
-        
+
+        # Execute crawl using sync operations
+        crawl_result = sync_crawler.crawl_category_sync(category)
+
+        # Handle both old list format and new dict format for backward compatibility
+        if isinstance(crawl_result, dict):
+            articles_found = crawl_result.get('articles_found', 0)
+            articles_saved = crawl_result.get('articles_saved', 0)
+        elif isinstance(crawl_result, list):
+            # Fallback for old format (should not happen with new implementation)
+            articles_found = len(crawl_result)
+            articles_saved = 0  # No database save in old format
+        else:
+            articles_found = 0
+            articles_saved = 0
+
         # Update completion status
-        await job_repo.update_status(
+        job_repo.update_status(
             job_id=UUID(job_id),
             status=CrawlJobStatus.COMPLETED,
             articles_found=articles_found,
             articles_saved=articles_saved,
             completed_at=datetime.now(timezone.utc)
         )
-        
-        logger.info("Crawl completed successfully", extra={
+
+        logger.info("Sync crawl completed successfully", extra={
             "correlation_id": correlation_id,
             "category_name": category.name,
             "articles_found": articles_found,
             "articles_saved": articles_saved
         })
-        
+
         return {
             "status": "completed",
             "category_name": category.name,
@@ -205,9 +205,9 @@ async def _async_crawl_category_task(
             "articles_saved": articles_saved,
             "correlation_id": correlation_id
         }
-        
+
     except RateLimitExceededError as e:
-        return await _handle_task_error(
+        return _handle_sync_task_error(
             task_instance=task_instance,
             exception=e,
             job_id=UUID(job_id),
@@ -215,9 +215,9 @@ async def _async_crawl_category_task(
             correlation_id=correlation_id,
             error_category="rate_limit"
         )
-        
+
     except GoogleNewsUnavailableError as e:
-        return await _handle_task_error(
+        return _handle_sync_task_error(
             task_instance=task_instance,
             exception=e,
             job_id=UUID(job_id),
@@ -225,9 +225,9 @@ async def _async_crawl_category_task(
             correlation_id=correlation_id,
             error_category="external_service"
         )
-        
+
     except ExternalServiceError as e:
-        return await _handle_task_error(
+        return _handle_sync_task_error(
             task_instance=task_instance,
             exception=e,
             job_id=UUID(job_id),
@@ -235,9 +235,9 @@ async def _async_crawl_category_task(
             correlation_id=correlation_id,
             error_category="external_service"
         )
-        
+
     except DatabaseConnectionError as e:
-        return await _handle_task_error(
+        return _handle_sync_task_error(
             task_instance=task_instance,
             exception=e,
             job_id=UUID(job_id),
@@ -245,9 +245,9 @@ async def _async_crawl_category_task(
             correlation_id=correlation_id,
             error_category="database"
         )
-        
+
     except BaseAppException as e:
-        return await _handle_task_error(
+        return _handle_sync_task_error(
             task_instance=task_instance,
             exception=e,
             job_id=UUID(job_id),
@@ -255,8 +255,16 @@ async def _async_crawl_category_task(
             correlation_id=correlation_id,
             error_category="application"
         )
-        
+
     except Exception as e:
+        # Log the original exception with full traceback
+        logger.exception(f"Unexpected error in sync crawl task: {e}", extra={
+            "correlation_id": correlation_id,
+            "category_id": category_id,
+            "job_id": job_id,
+            "error_type": type(e).__name__
+        })
+
         # Wrap unexpected exceptions
         wrapped_exception = CeleryTaskFailedError(
             task_name="crawl_category_task",
@@ -267,8 +275,8 @@ async def _async_crawl_category_task(
                 "job_id": job_id
             }
         )
-        
-        return await _handle_task_error(
+
+        return _handle_sync_task_error(
             task_instance=task_instance,
             exception=wrapped_exception,
             job_id=UUID(job_id),
@@ -276,6 +284,106 @@ async def _async_crawl_category_task(
             correlation_id=correlation_id,
             error_category="unexpected"
         )
+
+
+def _handle_sync_task_error(
+    task_instance,
+    exception: Exception,
+    job_id: UUID,
+    job_repo,
+    correlation_id: str,
+    error_category: str
+) -> Dict[str, Any]:
+    """Sync error handling for Celery tasks.
+
+    Args:
+        task_instance: Celery task instance for retry handling
+        exception: The exception that occurred
+        job_id: Job UUID for status tracking
+        job_repo: Sync job repository instance
+        correlation_id: Correlation ID for logging
+        error_category: Category of error for differentiated handling
+
+    Returns:
+        Error handling result dictionary
+    """
+    # Extract error details
+    if isinstance(exception, BaseAppException):
+        error_msg = exception.message
+        error_details = exception.details
+        is_retryable = exception.retryable
+        retry_after = exception.retry_after
+    else:
+        error_msg = str(exception)
+        error_details = {"error_type": type(exception).__name__}
+        is_retryable = True
+        retry_after = None
+
+    # Log the error with full context
+    logger.error(f"Sync task failed with {error_category} error: {error_msg}", extra={
+        "correlation_id": correlation_id,
+        "error_category": error_category,
+        "error_type": type(exception).__name__,
+        "error_details": error_details,
+        "job_id": str(job_id),
+        "task_id": task_instance.request.id,
+        "retry_count": task_instance.request.retries,
+        "is_retryable": is_retryable
+    })
+
+    # Update job status
+    try:
+        job_repo.update_status(
+            job_id=job_id,
+            status=CrawlJobStatus.FAILED,
+            error_message=error_msg,
+            completed_at=datetime.now(timezone.utc)
+        )
+    except Exception as db_error:
+        logger.error(f"Failed to update job status: {db_error}", extra={
+            "correlation_id": correlation_id,
+            "job_id": str(job_id)
+        })
+
+    # Determine retry behavior
+    should_retry = is_retryable and task_instance.request.retries < task_instance.max_retries
+
+    if should_retry:
+        countdown = _calculate_retry_countdown(error_category, task_instance.request.retries, retry_after)
+
+        logger.info(f"Retrying sync task in {countdown} seconds", extra={
+            "correlation_id": correlation_id,
+            "retry_count": task_instance.request.retries + 1,
+            "countdown": countdown,
+            "error_category": error_category
+        })
+
+        raise task_instance.retry(countdown=countdown)
+
+    # No more retries - final failure
+    logger.error(f"Sync task failed permanently after {task_instance.request.retries} retries", extra={
+        "correlation_id": correlation_id,
+        "error_category": error_category,
+        "final_error": error_msg
+    })
+
+    # Explicitly raise exception to ensure Celery marks task as failed
+    failure_exception = CeleryTaskFailedError(
+        task_name="crawl_category_task",
+        message=f"Sync task failed permanently: {error_msg}",
+        details={
+            "error_category": error_category,
+            "total_attempts": task_instance.request.retries + 1,
+            "job_id": str(job_id)
+        }
+    )
+
+    logger.error("Raising exception to ensure Celery task failure", extra={
+        "correlation_id": correlation_id,
+        "error_category": error_category
+    })
+
+    raise failure_exception
 
 
 async def _execute_crawl_with_tracking(
@@ -429,11 +537,11 @@ async def _handle_task_error(
         "error_category": error_category,
         "final_error": error_msg
     })
-    
+
     # Send critical alert for final failure
     alert_severity = _get_alert_severity_for_error_category(error_category)
     alert_type = _get_alert_type_for_error_category(error_category)
-    
+
     await alert_manager.send_alert(
         alert_type=alert_type,
         severity=alert_severity,
@@ -447,8 +555,21 @@ async def _handle_task_error(
         },
         correlation_id=correlation_id
     )
-    
-    return {
+
+    # Explicitly raise exception to ensure Celery marks task as failed
+    # This prevents silent failures where task reports "succeeded" but is actually failed
+    failure_exception = CeleryTaskFailedError(
+        task_name="crawl_category_task",
+        message=f"Task failed permanently: {error_msg}",
+        details={
+            "error_category": error_category,
+            "total_attempts": task_instance.request.retries + 1,
+            "job_id": str(job_id)
+        }
+    )
+
+    # Return failure details for logging before raising
+    failure_result = {
         "status": "failed",
         "error": error_msg,
         "error_category": error_category,
@@ -456,6 +577,13 @@ async def _handle_task_error(
         "total_attempts": task_instance.request.retries + 1,
         "correlation_id": correlation_id
     }
+
+    logger.error("Raising exception to ensure Celery task failure", extra={
+        "correlation_id": correlation_id,
+        "failure_result": failure_result
+    })
+
+    raise failure_exception
 
 
 def _calculate_retry_countdown(error_category: str, retry_count: int, retry_after: Optional[int]) -> int:
@@ -512,27 +640,37 @@ def _get_alert_type_for_error_category(error_category: str) -> AlertType:
 @celery_app.task(bind=True, max_retries=2, default_retry_delay=120)
 def cleanup_old_jobs_task(self) -> Dict[str, Any]:
     """Clean up old completed and failed jobs.
-    
+
     This maintenance task removes old job records to prevent database bloat.
     Runs periodically via Celery Beat scheduler.
-    
+
     Returns:
         Cleanup results and statistics
     """
     correlation_id = f"cleanup_{self.request.id}"
     settings = get_settings()
-    
+
     logger.info("Starting job cleanup task", extra={
         "correlation_id": correlation_id,
         "task_id": self.request.id
     })
-    
+
+    # Use asyncio.run() with proper error handling for Celery workers
+    import asyncio
+
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(_async_cleanup_old_jobs_task(self, correlation_id, settings))
-    finally:
-        loop.close()
+        return asyncio.run(_async_cleanup_old_jobs_task(self, correlation_id, settings))
+    except RuntimeError as e:
+        logger.warning(f"Event loop conflict in cleanup task: {e}", extra={
+            "correlation_id": correlation_id,
+            "task_id": self.request.id
+        })
+        # Explicit failure instead of silent success
+        raise CeleryTaskFailedError(
+            task_name="cleanup_old_jobs_task",
+            message=f"Event loop conflict: {str(e)}",
+            details={"error_type": "event_loop_conflict"}
+        )
 
 
 async def _async_cleanup_old_jobs_task(
@@ -633,26 +771,36 @@ async def _async_cleanup_old_jobs_task(
 @celery_app.task(bind=True, max_retries=1)
 def monitor_job_health_task(self) -> Dict[str, Any]:
     """Monitor job queue health and detect issues.
-    
+
     This maintenance task checks for stuck jobs, queue backlogs,
     and other health issues in the job system.
-    
+
     Returns:
         Health monitoring results
     """
     correlation_id = f"health_{self.request.id}"
-    
+
     logger.info("Starting job health monitoring", extra={
         "correlation_id": correlation_id,
         "task_id": self.request.id
     })
-    
+
+    # Use asyncio.run() with proper error handling for Celery workers
+    import asyncio
+
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(_async_monitor_job_health_task(self, correlation_id))
-    finally:
-        loop.close()
+        return asyncio.run(_async_monitor_job_health_task(self, correlation_id))
+    except RuntimeError as e:
+        logger.warning(f"Event loop conflict in health monitoring: {e}", extra={
+            "correlation_id": correlation_id,
+            "task_id": self.request.id
+        })
+        # Explicit failure instead of silent success
+        raise CeleryTaskFailedError(
+            task_name="monitor_job_health_task",
+            message=f"Event loop conflict: {str(e)}",
+            details={"error_type": "event_loop_conflict"}
+        )
 
 
 async def _async_monitor_job_health_task(
@@ -797,84 +945,103 @@ def trigger_category_crawl_task(
     metadata: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """Trigger a new crawl job for a specific category.
-    
+
     This task creates a new job record and schedules the actual crawl task.
     It's useful for manual triggering or API-driven crawling.
-    
+
     Args:
         category_id: UUID string of category to crawl
         priority: Job priority (higher = more important)
         metadata: Optional metadata for the job
-        
+
     Returns:
         Job creation and scheduling results
     """
     correlation_id = f"trigger_{self.request.id}"
-    
+
     logger.info("Triggering category crawl", extra={
         "correlation_id": correlation_id,
         "category_id": category_id,
         "priority": priority,
         "task_id": self.request.id
     })
-    
+
+    # Use proper event loop handling for Celery workers
+    import asyncio
+    import concurrent.futures
+    import threading
+
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(_async_trigger_category_crawl_task(
+        # Use sync implementation to avoid event loop conflicts
+        return _sync_trigger_category_crawl_task(
             self, category_id, priority, metadata, correlation_id
-        ))
-    finally:
-        loop.close()
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to trigger category crawl: {e}", extra={
+            "correlation_id": correlation_id,
+            "task_id": self.request.id,
+            "error_type": type(e).__name__
+        })
+        raise CeleryTaskFailedError(
+            task_name="trigger_category_crawl_task",
+            message=f"Failed to trigger category crawl: {str(e)}",
+            details={"error_type": type(e).__name__}
+        )
 
 
-async def _async_trigger_category_crawl_task(
+def _sync_trigger_category_crawl_task(
     task_instance,
     category_id: str,
     priority: int,
     metadata: Optional[Dict[str, Any]],
     correlation_id: str
 ) -> Dict[str, Any]:
-    """Async implementation of category crawl triggering.
-    
+    """Sync implementation of category crawl triggering using sync repositories.
+
     Args:
         task_instance: Celery task instance
         category_id: Category UUID string
         priority: Job priority
         metadata: Optional job metadata
         correlation_id: Correlation ID
-        
+
     Returns:
         Triggering results
     """
+    from src.database.repositories.sync_category_repo import SyncCategoryRepository
+    from src.database.repositories.sync_job_repo import SyncCrawlJobRepository
+
     try:
-        # Validate category exists and is active
-        category_repo = CategoryRepository()
-        category = await category_repo.get_by_id(UUID(category_id))
-        
+        # Validate category exists and is active using sync repository
+        category_repo = SyncCategoryRepository()
+        category = category_repo.get_by_id(UUID(category_id))
+
         if not category:
             error_msg = f"Category {category_id} not found"
             return {"status": "failed", "error": error_msg}
-        
+
         if not category.is_active:
             error_msg = f"Category {category.name} is not active"
             return {"status": "failed", "error": error_msg}
-        
-        # Create new job record
-        job_repo = CrawlJobRepository()
-        job = await job_repo.create_job(
+
+        # Create new job record using sync repository
+        from src.database.models.crawl_job import CrawlJobStatus
+        job_repo = SyncCrawlJobRepository()
+        job = job_repo.create(
             category_id=UUID(category_id),
             priority=priority,
             correlation_id=correlation_id,
-            metadata=metadata or {}
+            metadata=metadata or {},
+            status=CrawlJobStatus.PENDING
         )
-        
+
         # Schedule the actual crawl task
         crawl_result = crawl_category_task.delay(
             category_id=category_id,
             job_id=str(job.id)
         )
-        
+
         result = {
             "status": "scheduled",
             "job_id": str(job.id),
@@ -883,14 +1050,14 @@ async def _async_trigger_category_crawl_task(
             "priority": priority,
             "correlation_id": correlation_id
         }
-        
+
         logger.info("Category crawl scheduled", extra={
             "correlation_id": correlation_id,
             **result
         })
-        
+
         return result
-        
+
     except Exception as e:
         error_msg = f"Failed to trigger category crawl: {str(e)}"
         logger.error(error_msg, extra={
@@ -898,7 +1065,7 @@ async def _async_trigger_category_crawl_task(
             "category_id": category_id,
             "error_type": type(e).__name__
         })
-        
+
         return {
             "status": "failed",
             "error": error_msg,

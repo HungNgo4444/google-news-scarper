@@ -6,6 +6,8 @@ export interface Category {
   keywords: string[];
   exclude_keywords: string[];
   is_active: boolean;
+  language: string;
+  country: string;
   created_at: string;
   updated_at: string;
 }
@@ -15,6 +17,8 @@ export interface CreateCategoryRequest {
   keywords: string[];
   exclude_keywords: string[];
   is_active: boolean;
+  language: string;
+  country: string;
 }
 
 export interface UpdateCategoryRequest {
@@ -22,6 +26,8 @@ export interface UpdateCategoryRequest {
   keywords?: string[];
   exclude_keywords?: string[];
   is_active?: boolean;
+  language?: string;
+  country?: string;
 }
 
 export interface ApiError {

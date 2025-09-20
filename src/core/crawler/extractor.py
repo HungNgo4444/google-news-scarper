@@ -101,7 +101,9 @@ The extracted data follows a consistent schema:
 import asyncio
 import hashlib
 import logging
-from typing import Dict, Optional, Any
+import random
+import time
+from typing import Dict, Optional, Any, List
 from uuid import uuid4
 from datetime import datetime, timezone
 
@@ -119,6 +121,12 @@ if os.path.exists(newspaper_path):
     sys.path.insert(0, newspaper_path)
 
 from newspaper import Config, Article
+
+# Import sync_playwright for JavaScript rendering
+try:
+    from playwright.sync_api import sync_playwright
+except ImportError:
+    sync_playwright = None
 
 from src.shared.config import Settings
 from src.shared.exceptions import (
@@ -190,13 +198,39 @@ class ArticleExtractor:
             return await self._extract_with_retry(url, correlation_id)
         except Exception as e:
             self.logger.error(
-                f"Final extraction failure: {e}",
+                f"Standard extraction failed: {e}",
                 extra={
                     "correlation_id": correlation_id,
                     "url": url,
                     "error_type": type(e).__name__
                 }
             )
+
+            # Try JavaScript rendering as fallback
+            if self.settings.ENABLE_JAVASCRIPT_RENDERING:
+                self.logger.info(
+                    "Standard extraction failed, attempting JavaScript rendering fallback",
+                    extra={
+                        "correlation_id": correlation_id,
+                        "url": url,
+                        "error_type": type(e).__name__
+                    }
+                )
+
+                try:
+                    result = await self._extract_with_javascript_rendering(url, correlation_id)
+                    if result:
+                        return result
+                except Exception as fallback_error:
+                    self.logger.error(
+                        f"JavaScript rendering fallback also failed: {fallback_error}",
+                        extra={
+                            "correlation_id": correlation_id,
+                            "url": url,
+                            "fallback_error": str(fallback_error)
+                        }
+                    )
+
             return None
     
     async def _extract_with_retry(self, url: str, correlation_id: str) -> Optional[Dict[str, Any]]:
@@ -292,16 +326,9 @@ class ArticleExtractor:
             # Create Article instance with timeout
             async with asyncio.timeout(self.settings.EXTRACTION_TIMEOUT):
                 article = Article(url, config=self.config)
-                
-                # Download article content (this is a sync operation)
-                await asyncio.get_event_loop().run_in_executor(
-                    None, article.download
-                )
-                
-                # Parse article content (this is a sync operation)
-                await asyncio.get_event_loop().run_in_executor(
-                    None, article.parse
-                )
+
+                # Download and parse article content using proper async wrapper
+                await self._download_and_parse_article_async(article)
                 
         except asyncio.TimeoutError:
             raise ExtractionTimeoutError(f"Extraction timed out after {self.settings.EXTRACTION_TIMEOUT} seconds")
@@ -491,5 +518,461 @@ class ArticleExtractor:
                 
                 # Return URL even without extension - might be dynamic image
                 return image_url
-        
+
         return None
+
+    async def _download_and_parse_article_async(self, article: Article) -> None:
+        """Download and parse article using proper async wrappers with timeout handling.
+
+        Args:
+            article: newspaper4k Article instance to download and parse
+
+        Raises:
+            ExtractionTimeoutError: When download or parse times out
+            ExtractionNetworkError: When network-related errors occur
+            ExtractionParsingError: When parsing fails
+        """
+        import concurrent.futures
+
+        # Use a ThreadPoolExecutor for better control over sync operations
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            try:
+                # Download with proper timeout handling
+                download_future = executor.submit(article.download)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.wrap_future(download_future),
+                        timeout=self.settings.EXTRACTION_TIMEOUT / 2  # Half timeout for download
+                    )
+                except asyncio.TimeoutError:
+                    download_future.cancel()
+                    raise ExtractionTimeoutError(
+                        url=getattr(article, 'url', 'unknown'),
+                        timeout=int(self.settings.EXTRACTION_TIMEOUT / 2)
+                    )
+
+                # Parse with proper timeout handling
+                parse_future = executor.submit(article.parse)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.wrap_future(parse_future),
+                        timeout=self.settings.EXTRACTION_TIMEOUT / 2  # Half timeout for parsing
+                    )
+                except asyncio.TimeoutError:
+                    parse_future.cancel()
+                    raise ExtractionTimeoutError(
+                        url=getattr(article, 'url', 'unknown'),
+                        timeout=int(self.settings.EXTRACTION_TIMEOUT / 2)
+                    )
+
+            except ExtractionTimeoutError:
+                # Re-raise timeout errors without modification
+                raise
+            except concurrent.futures.CancelledError:
+                raise ExtractionTimeoutError(
+                    url=getattr(article, 'url', 'unknown'),
+                    timeout=self.settings.EXTRACTION_TIMEOUT
+                )
+            except Exception as e:
+                if "network" in str(e).lower() or "connection" in str(e).lower():
+                    raise ExtractionNetworkError(f"Network error during article processing: {e}")
+                else:
+                    raise ExtractionParsingError(f"Parsing error during article processing: {e}")
+
+    async def _extract_with_javascript_rendering(self, url: str, correlation_id: str) -> Optional[Dict[str, Any]]:
+        """Extract article using sync_playwright for JavaScript rendering.
+
+        This method follows the proven pattern from newspaper4k examples.rst (lines 120-168)
+        for integrating sync_playwright with newspaper4k.
+
+        Args:
+            url: Article URL to extract with JavaScript rendering
+            correlation_id: Unique identifier for tracking
+
+        Returns:
+            Dictionary containing extracted article metadata or None
+
+        Raises:
+            ExtractionTimeoutError: When JavaScript rendering times out
+            ExtractionParsingError: When content parsing fails
+        """
+        if not self.settings.ENABLE_JAVASCRIPT_RENDERING:
+            return None
+
+        if sync_playwright is None:
+            self.logger.warning(
+                "sync_playwright not available, skipping JavaScript rendering",
+                extra={"correlation_id": correlation_id, "url": url}
+            )
+            return None
+
+        self.logger.info(
+            "Attempting JavaScript rendering extraction",
+            extra={"correlation_id": correlation_id, "url": url}
+        )
+
+        try:
+            # Use sync_playwright as per newspaper4k-master examples
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=self.settings.PLAYWRIGHT_HEADLESS)
+                page = browser.new_page()
+
+                # Set timeout for page operations
+                page.set_default_timeout(self.settings.PLAYWRIGHT_TIMEOUT * 1000)
+
+                # Navigate to URL and wait for JavaScript to render
+                page.goto(url)
+                time.sleep(self.settings.PLAYWRIGHT_WAIT_TIME)  # Allow JavaScript to render
+
+                # Get rendered HTML content
+                content = page.content()
+                browser.close()
+
+            # Use newspaper4k to parse the rendered content (proven pattern)
+            article = Article(url, config=self.config)
+            article.set_html(content)  # Use rendered HTML
+            article.parse()
+
+            # Extract and validate metadata
+            extracted_data = self._extract_metadata_from_article(article, url)
+
+            self.logger.info(
+                "JavaScript rendering extraction successful",
+                extra={
+                    "correlation_id": correlation_id,
+                    "url": url,
+                    "title_length": len(extracted_data.get("title", "")),
+                    "content_length": len(extracted_data.get("content", "")),
+                    "method": "sync_playwright"
+                }
+            )
+
+            return extracted_data
+
+        except Exception as e:
+            self.logger.error(
+                f"JavaScript rendering extraction failed: {e}",
+                extra={
+                    "correlation_id": correlation_id,
+                    "url": url,
+                    "error_type": type(e).__name__,
+                    "method": "sync_playwright"
+                }
+            )
+            return None
+
+    async def extract_articles_batch(self, urls: List[str]) -> List[Dict[str, Any]]:
+        """Extract articles in batch with Google News optimization.
+
+        Args:
+            urls: List of article URLs to extract
+
+        Returns:
+            List of dictionaries containing extracted article metadata
+        """
+        if not urls:
+            return []
+
+        # Separate Google News URLs from regular URLs
+        google_news_urls = [url for url in urls if 'news.google.com' in url]
+        regular_urls = [url for url in urls if 'news.google.com' not in url]
+
+        results = []
+
+        # Process Google News URLs in optimized batches
+        if google_news_urls:
+            self.logger.info(
+                f"Processing {len(google_news_urls)} Google News URLs in batches",
+                extra={"batch_size": 10, "total_google_news_urls": len(google_news_urls)}
+            )
+            google_results = await self._extract_google_news_batch(google_news_urls)
+            results.extend(google_results)
+
+        # Process regular URLs with standard method
+        if regular_urls:
+            self.logger.info(
+                f"Processing {len(regular_urls)} regular URLs",
+                extra={"total_regular_urls": len(regular_urls)}
+            )
+            for url in regular_urls:
+                try:
+                    result = await self.extract_article_metadata(url)
+                    if result:
+                        results.append(result)
+                except Exception as e:
+                    self.logger.error(
+                        f"Failed to extract regular URL: {e}",
+                        extra={"url": url, "error": str(e)}
+                    )
+
+        return results
+
+    async def _extract_google_news_batch(self, urls: List[str]) -> List[Dict[str, Any]]:
+        """Process Google News URLs in batches of 10 with single browser multi-tab strategy.
+
+        Args:
+            urls: List of Google News URLs to process
+
+        Returns:
+            List of extracted article metadata
+        """
+        batch_size = 10
+        all_results = []
+
+        for i in range(0, len(urls), batch_size):
+            batch = urls[i:i+batch_size]
+
+            self.logger.info(
+                f"Processing Google News batch {i//batch_size + 1}",
+                extra={
+                    "batch_start": i,
+                    "batch_size": len(batch),
+                    "total_batches": (len(urls) + batch_size - 1) // batch_size
+                }
+            )
+
+            try:
+                batch_results = await self._process_batch_with_single_browser(batch)
+                all_results.extend(batch_results)
+
+                # Anti-detection delay between batches (except for last batch)
+                if i + batch_size < len(urls):
+                    delay = random.randint(5, 10)
+                    self.logger.info(
+                        f"Anti-detection delay between batches: {delay}s",
+                        extra={"delay_seconds": delay}
+                    )
+                    await asyncio.sleep(delay)
+
+            except Exception as e:
+                self.logger.error(
+                    f"Batch processing failed: {e}",
+                    extra={
+                        "batch_start": i,
+                        "batch_size": len(batch),
+                        "error": str(e)
+                    }
+                )
+                # Add failed results for this batch
+                for url in batch:
+                    all_results.append({
+                        "title": None,
+                        "content": None,
+                        "author": None,
+                        "publish_date": None,
+                        "image_url": None,
+                        "source_url": url,
+                        "url_hash": hashlib.sha256(url.encode('utf-8')).hexdigest(),
+                        "content_hash": None,
+                        "extracted_at": datetime.now(timezone.utc),
+                        "extraction_success": False,
+                        "extraction_error": str(e),
+                        "extraction_method": "google_news_batch_failed"
+                    })
+
+        return all_results
+
+    async def _process_batch_with_single_browser(self, urls_batch: List[str]) -> List[Dict[str, Any]]:
+        """Process batch of URLs with single browser multi-tab strategy (max 10 tabs).
+
+        Based on proven pattern from financial_news_extractor.py lines 317-412.
+
+        Args:
+            urls_batch: List of URLs to process (max 10)
+
+        Returns:
+            List of extracted article metadata
+        """
+        if sync_playwright is None:
+            self.logger.error("sync_playwright not available for Google News extraction")
+            return []
+
+        results = []
+
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+                )
+
+                self.logger.info(
+                    f"Started browser for batch processing {len(urls_batch)} URLs",
+                    extra={"batch_size": len(urls_batch)}
+                )
+
+                # Process each URL in separate tab (max 10)
+                for i, url in enumerate(urls_batch[:10]):
+                    try:
+                        page = browser.new_page()
+
+                        # Ultra-fast settings - block unnecessary resources
+                        await page.route(
+                            "**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico}",
+                            lambda route: route.abort()
+                        )
+
+                        page.set_extra_http_headers({
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                        })
+
+                        self.logger.debug(
+                            f"Processing URL {i+1}/{len(urls_batch)}: {url[:80]}...",
+                            extra={"tab_index": i, "url_preview": url[:80]}
+                        )
+
+                        # Navigate with Google News specific timing
+                        await page.goto(url, wait_until='domcontentloaded', timeout=30000)
+                        await asyncio.sleep(4)  # Critical for Google News redirect
+                        final_url = page.url
+
+                        # Handle no redirect case
+                        if final_url == url or 'news.google.com' in final_url:
+                            try:
+                                await page.wait_for_load_state('networkidle', timeout=15000)
+                                await asyncio.sleep(5)
+                                final_url = page.url
+                            except:
+                                pass
+
+                        # Extract content if successfully redirected
+                        if final_url != url and 'news.google.com' not in final_url:
+                            # Use newspaper4k extraction on final URL
+                            result = await self._extract_with_newspaper(final_url)
+                            if result:
+                                result["extraction_method"] = "google_news_playwright"
+                                result["google_news_url"] = url
+                                result["final_redirected_url"] = final_url
+                                results.append(result)
+                            else:
+                                # Failed extraction but successful redirect
+                                results.append({
+                                    "title": None,
+                                    "content": None,
+                                    "author": None,
+                                    "publish_date": None,
+                                    "image_url": None,
+                                    "source_url": final_url,
+                                    "url_hash": hashlib.sha256(final_url.encode('utf-8')).hexdigest(),
+                                    "content_hash": None,
+                                    "extracted_at": datetime.now(timezone.utc),
+                                    "extraction_success": False,
+                                    "extraction_error": "Content extraction failed after redirect",
+                                    "extraction_method": "google_news_playwright_failed",
+                                    "google_news_url": url,
+                                    "final_redirected_url": final_url
+                                })
+                        else:
+                            # No redirect - failed
+                            results.append({
+                                "title": None,
+                                "content": None,
+                                "author": None,
+                                "publish_date": None,
+                                "image_url": None,
+                                "source_url": url,
+                                "url_hash": hashlib.sha256(url.encode('utf-8')).hexdigest(),
+                                "content_hash": None,
+                                "extracted_at": datetime.now(timezone.utc),
+                                "extraction_success": False,
+                                "extraction_error": "No redirect from Google News URL",
+                                "extraction_method": "google_news_no_redirect",
+                                "google_news_url": url
+                            })
+
+                        page.close()
+
+                        # Anti-detection delay between tabs
+                        if i < len(urls_batch) - 1:
+                            delay = random.randint(1, 3)
+                            await asyncio.sleep(delay)
+
+                    except Exception as e:
+                        self.logger.error(
+                            f"Tab {i+1} processing failed: {e}",
+                            extra={"tab_index": i, "url": url, "error": str(e)}
+                        )
+                        # Log error but continue with other tabs
+                        results.append({
+                            "title": None,
+                            "content": None,
+                            "author": None,
+                            "publish_date": None,
+                            "image_url": None,
+                            "source_url": url,
+                            "url_hash": hashlib.sha256(url.encode('utf-8')).hexdigest(),
+                            "content_hash": None,
+                            "extracted_at": datetime.now(timezone.utc),
+                            "extraction_success": False,
+                            "extraction_error": str(e),
+                            "extraction_method": "google_news_tab_failed",
+                            "google_news_url": url
+                        })
+
+                browser.close()
+
+        except Exception as e:
+            self.logger.error(
+                f"Browser session failed: {e}",
+                extra={"batch_size": len(urls_batch), "error": str(e)}
+            )
+            # Return failed results for all URLs
+            for url in urls_batch:
+                results.append({
+                    "title": None,
+                    "content": None,
+                    "author": None,
+                    "publish_date": None,
+                    "image_url": None,
+                    "source_url": url,
+                    "url_hash": hashlib.sha256(url.encode('utf-8')).hexdigest(),
+                    "content_hash": None,
+                    "extracted_at": datetime.now(timezone.utc),
+                    "extraction_success": False,
+                    "extraction_error": str(e),
+                    "extraction_method": "google_news_browser_failed",
+                    "google_news_url": url
+                })
+
+        return results
+
+    async def _extract_google_news_with_playwright(self, url: str, correlation_id: str) -> Optional[Dict[str, Any]]:
+        """Extract single Google News URL using Playwright as PRIMARY method.
+
+        Args:
+            url: Google News URL to extract
+            correlation_id: Unique identifier for tracking
+
+        Returns:
+            Dictionary containing extracted article metadata or None
+        """
+        batch_results = await self._process_batch_with_single_browser([url])
+        if batch_results:
+            result = batch_results[0]
+            if result.get("extraction_success", False) or result.get("final_redirected_url"):
+                return result
+        return None
+
+    async def _extract_with_newspaper(self, url: str) -> Optional[Dict[str, Any]]:
+        """Extract article using newspaper4k with async wrapper.
+
+        Args:
+            url: Article URL to extract
+
+        Returns:
+            Dictionary containing extracted article metadata or None
+        """
+        try:
+            article = Article(url, config=self.config)
+            await self._download_and_parse_article_async(article)
+
+            extracted_data = self._extract_metadata_from_article(article, url)
+            extracted_data["extraction_success"] = True
+            return extracted_data
+
+        except Exception as e:
+            self.logger.error(
+                f"Newspaper extraction failed: {e}",
+                extra={"url": url, "error": str(e)}
+            )
+            return None

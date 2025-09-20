@@ -80,6 +80,56 @@ class CreateJobRequest(BaseModel):
         return v
 
 
+class PriorityUpdateRequest(BaseModel):
+    """Schema for updating job priority (Run Now functionality)."""
+
+    priority: int = Field(
+        ...,
+        ge=0,
+        le=10,
+        description="New priority value (0-10, higher = more urgent)",
+        example=10
+    )
+
+
+class JobUpdateRequest(BaseModel):
+    """Schema for updating job configuration."""
+
+    priority: Optional[int] = Field(
+        None,
+        ge=0,
+        le=10,
+        description="Job priority (0-10, higher = more priority)",
+        example=5
+    )
+
+    retry_count: Optional[int] = Field(
+        None,
+        ge=0,
+        le=10,
+        description="Number of retry attempts",
+        example=3
+    )
+
+    job_metadata: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Job metadata updates",
+        example={"source": "manual_update", "priority_reason": "urgent_news"}
+    )
+
+    @validator('job_metadata')
+    def validate_job_metadata(cls, v):
+        """Validate job metadata dictionary."""
+        if v is None:
+            return None
+
+        # Check for reasonable size limit
+        if len(str(v)) > 1000:
+            raise ValueError('Job metadata is too large (max 1000 characters)')
+
+        return v
+
+
 class JobResponse(BaseModel):
     """Schema for job API responses."""
 
@@ -295,6 +345,52 @@ class JobStatusResponse(BaseModel):
             datetime: lambda dt: dt.isoformat(),
             UUID: lambda uuid: str(uuid)
         }
+
+
+class JobDeletionRequest(BaseModel):
+    """Schema for job deletion with impact analysis."""
+
+    force: bool = Field(
+        False,
+        description="Force deletion even if job is running",
+        example=False
+    )
+
+    delete_articles: bool = Field(
+        False,
+        description="Also delete associated articles",
+        example=False
+    )
+
+
+class JobDeletionResponse(BaseModel):
+    """Schema for job deletion response with impact information."""
+
+    job_id: UUID = Field(
+        ...,
+        description="ID of deleted job"
+    )
+
+    impact: Dict[str, Any] = Field(
+        ...,
+        description="Impact analysis of deletion",
+        example={
+            "articles_affected": 15,
+            "articles_deleted": 0,
+            "was_running": False
+        }
+    )
+
+    message: str = Field(
+        ...,
+        description="Deletion confirmation message",
+        example="Job deleted successfully"
+    )
+
+    deleted_at: datetime = Field(
+        ...,
+        description="When the job was deleted"
+    )
 
 
 class ErrorResponse(BaseModel):

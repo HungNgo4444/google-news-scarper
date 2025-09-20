@@ -85,6 +85,7 @@ except ImportError:
 from src.shared.config import Settings
 from src.shared.exceptions import (
     BaseAppException,
+    ErrorCode,
     ExtractionError,
     RateLimitExceededError,
     ValidationError,
@@ -99,10 +100,24 @@ from src.core.error_handling.circuit_breaker import (
 )
 from src.core.error_handling.retry_handler import RetryHandler, EXTERNAL_SERVICE_RETRY
 
+# CloudScraper import with fallback
+try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
+
 
 class CrawlerError(BaseAppException):
     """Exception raised for crawler-specific errors."""
-    pass
+
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__(
+            code=ErrorCode.INTERNAL_SERVER_ERROR,
+            message=message,
+            details=details,
+            retryable=True,
+            retry_after=60
+        )
 
 
 class GoogleNewsSearchError(ExternalServiceError):
@@ -174,7 +189,22 @@ class CrawlerEngine:
         
         # Initialize Google News source
         self.google_news = GoogleNewsSource()
-        
+
+        # Initialize CloudScraper if enabled
+        self.scraper = None
+        if self.settings.CLOUDSCRAPER_ENABLED and cloudscraper:
+            try:
+                self.scraper = cloudscraper.create_scraper(
+                    browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True},
+                    delay=self.settings.CLOUDSCRAPER_DELAY
+                )
+                self.logger.info("CloudScraper initialized successfully")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize CloudScraper: {e}")
+                self.scraper = None
+        elif self.settings.CLOUDSCRAPER_ENABLED and not cloudscraper:
+            self.logger.warning("CloudScraper enabled but not installed. Install with: pip install cloudscraper")
+
         # Configuration validation
         self._validate_configuration()
         
@@ -625,38 +655,208 @@ class CrawlerEngine:
                 )
 
     def _execute_google_news_search_sync(
-        self, 
-        search_query: str, 
-        max_results: int, 
-        language: str, 
+        self,
+        search_query: str,
+        max_results: int,
+        language: str,
         country: str
     ):
-        """Execute Google News search with enhanced parameters (synchronous).
-        
+        """Execute Google News search with enhanced parameters and CloudScraper support.
+
         Args:
             search_query: The search query string
             max_results: Maximum results to return
             language: Language code
             country: Country code
-            
+
         Returns:
             Search results from GoogleNewsSource
         """
         try:
-            # Configure GoogleNewsSource with enhanced parameters if supported
-            if hasattr(self.google_news, 'set_language'):
-                self.google_news.set_language(language)
-            if hasattr(self.google_news, 'set_country'):
-                self.google_news.set_country(country)
-            
-            # Execute search with keyword
-            self.google_news.download(keyword=search_query, top_news=False)
-            return self.google_news.generate_articles(limit=100)
-            
+            # Use CloudScraper if available for enhanced Google News access
+            if self.scraper:
+                self.logger.debug("Using CloudScraper for Google News search")
+                return self._execute_cloudscraper_search(
+                    search_query, max_results, language, country
+                )
+            else:
+                # Fallback to standard GoogleNewsSource
+                self.logger.debug("Using standard GoogleNewsSource")
+                return self._execute_standard_search(
+                    search_query, max_results, language, country
+                )
+
         except Exception as e:
             # Log the error but re-raise to be handled by the calling method
-            self.logger.warning(f"GoogleNewsSource search execution failed: {e}")
+            self.logger.warning(f"Google News search execution failed: {e}")
             raise
+
+    def _execute_standard_search(
+        self,
+        search_query: str,
+        max_results: int,
+        language: str,
+        country: str
+    ):
+        """Execute standard GoogleNewsSource search."""
+        # Configure GoogleNewsSource with enhanced parameters if supported
+        if hasattr(self.google_news, 'set_language'):
+            self.google_news.set_language(language)
+        if hasattr(self.google_news, 'set_country'):
+            self.google_news.set_country(country)
+
+        # Execute search with keyword
+        self.google_news.download(keyword=search_query, top_news=False)
+        return self.google_news.generate_articles(limit=max_results)
+
+    def _execute_cloudscraper_search(
+        self,
+        search_query: str,
+        max_results: int,
+        language: str,
+        country: str
+    ):
+        """Execute Google News search using CloudScraper for anti-bot protection.
+
+        Args:
+            search_query: The search query string
+            max_results: Maximum results to return
+            language: Language code
+            country: Country code
+
+        Returns:
+            Parsed search results
+        """
+        import time
+        import urllib.parse
+
+        try:
+            # Build Google News search URL
+            encoded_query = urllib.parse.quote(search_query)
+            google_news_url = f"https://news.google.com/search?q={encoded_query}&hl={language}&gl={country}&ceid={country}:{language}"
+
+            # Add CloudScraper delay
+            if self.settings.CLOUDSCRAPER_DELAY > 0:
+                time.sleep(self.settings.CLOUDSCRAPER_DELAY)
+
+            # Make request with CloudScraper
+            response = self.scraper.get(
+                google_news_url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': f'{language},{language[:2]};q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
+            )
+
+            if response.status_code == 200:
+                # Parse the HTML response to extract article URLs
+                return self._parse_google_news_html(response.text, max_results)
+            else:
+                self.logger.warning(f"CloudScraper received status code {response.status_code}")
+                # Fallback to standard method
+                return self._execute_standard_search(search_query, max_results, language, country)
+
+        except Exception as e:
+            self.logger.warning(f"CloudScraper failed: {e}, falling back to standard method")
+            # Fallback to standard GoogleNewsSource
+            return self._execute_standard_search(search_query, max_results, language, country)
+
+    def _parse_google_news_html(self, html_content: str, max_results: int):
+        """Parse Google News HTML to extract article URLs.
+
+        Args:
+            html_content: HTML content from Google News
+            max_results: Maximum number of results to extract
+
+        Returns:
+            List of article objects with URLs
+        """
+        try:
+            from bs4 import BeautifulSoup
+            import re
+
+            soup = BeautifulSoup(html_content, 'html.parser')
+            articles = []
+
+            # Look for article links in Google News HTML structure
+            # Google News uses various selectors, so we try multiple approaches
+            selectors = [
+                'article a[href]',
+                'a[href*="/articles/"]',
+                'a[href*="./articles/"]',
+                '.JtKRv a[href]',
+                '.ipQwMb a[href]',
+                '.WwrzSb a[href]'
+            ]
+
+            all_links = []
+            for selector in selectors:
+                links = soup.select(selector)
+                all_links.extend(links)
+
+            # Process links and extract article URLs
+            seen_urls = set()
+            for link in all_links:
+                href = link.get('href')
+                if href and not href in seen_urls:
+                    # Convert relative URLs to absolute
+                    if href.startswith('./'):
+                        href = 'https://news.google.com/' + href[2:]
+                    elif href.startswith('/'):
+                        href = 'https://news.google.com' + href
+
+                    # Extract the actual article URL from Google News redirect
+                    actual_url = self._extract_actual_url(href)
+                    if actual_url and actual_url not in seen_urls:
+                        seen_urls.add(actual_url)
+                        articles.append({
+                            'url': actual_url,
+                            'link': actual_url,
+                            'title': link.get_text(strip=True) or 'No title'
+                        })
+
+                        if len(articles) >= max_results:
+                            break
+
+            self.logger.info(f"CloudScraper extracted {len(articles)} article URLs")
+            return articles
+
+        except Exception as e:
+            self.logger.error(f"Failed to parse Google News HTML: {e}")
+            return []
+
+    def _extract_actual_url(self, google_url: str) -> str:
+        """Extract the actual article URL from Google News redirect URL.
+
+        Args:
+            google_url: Google News redirect URL
+
+        Returns:
+            Actual article URL or None
+        """
+        try:
+            import urllib.parse
+
+            # Google News URLs often contain the actual URL as a parameter
+            if 'url=' in google_url:
+                parsed = urllib.parse.urlparse(google_url)
+                params = urllib.parse.parse_qs(parsed.query)
+                if 'url' in params:
+                    return urllib.parse.unquote(params['url'][0])
+
+            # If it's already a direct URL, return it
+            if google_url.startswith('http') and 'news.google.com' not in google_url:
+                return google_url
+
+            return None
+
+        except Exception as e:
+            self.logger.warning(f"Failed to extract actual URL from {google_url}: {e}")
+            return None
     
     def _extract_urls_from_results(self, search_results, max_results: int) -> List[str]:
         """Extract URLs from search results with enhanced handling.
@@ -993,8 +1193,8 @@ class CrawlerEngine:
         extracted_articles = []
         failed_count = 0
         
-        # Process URLs with concurrency control
-        semaphore = asyncio.Semaphore(5)  # Limit concurrent extractions
+        # Process URLs with concurrency control (configurable limit)
+        semaphore = asyncio.Semaphore(self.settings.CRAWLER_CONCURRENCY_LIMIT)
         
         async def extract_single_url(url: str) -> Optional[Dict[str, Any]]:
             async with semaphore:

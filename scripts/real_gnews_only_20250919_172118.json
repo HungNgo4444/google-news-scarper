@@ -1,0 +1,36 @@
+{
+  "test_info": {
+    "timestamp": "20250919_172118",
+    "method": "real_gnews_only_test",
+    "region": "Vietnam",
+    "language": "vi",
+    "keywords_used": [
+      "bitcoin",
+      "tai san ma hoa",
+      "ethusd",
+      "cryptocurrency",
+      "crypto"
+    ],
+    "data_policy": "REAL_ONLY_NO_FAKE",
+    "gnews_urls_found": 0,
+    "articles_extracted": 0,
+    "success_steps": 3,
+    "total_errors": 2
+  },
+  "real_gnews_urls": [],
+  "real_articles": [],
+  "error_report": {
+    "import_errors": [],
+    "init_errors": [],
+    "crawl_errors": [
+      "GNEWS returned 0 URLs (real result)",
+      "No real GNEWS URLs available"
+    ],
+    "success_steps": [
+      "OK Imported @src components",
+      "OK CrawlerEngine initialized",
+      "OK REAL GNEWS: 0 URLs"
+    ],
+    "final_data": null
+  }
+}
