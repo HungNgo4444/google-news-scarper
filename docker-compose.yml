@@ -83,7 +83,7 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    command: celery -A src.core.scheduler.celery_app worker --loglevel=debug --concurrency=2 --max-tasks-per-child=50
+    command: celery -A src.core.scheduler.celery_app worker --loglevel=debug --pool=threads --concurrency=1
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://postgres:postgres@postgres:5432/google_news}
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -91,6 +91,10 @@ services:
       - ENVIRONMENT=development
       - LOG_LEVEL=DEBUG
       - C_FORCE_ROOT=1
+      - ENABLE_JAVASCRIPT_RENDERING=true
+      - PLAYWRIGHT_BROWSERS_PATH=/home/worker/.cache/ms-playwright
+      - PYTHONUNBUFFERED=1
+      - CELERY_TASK_ALWAYS_EAGER=False
     volumes:
       - ./src:/app/src:ro
       - ./logs:/app/logs

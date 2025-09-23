@@ -1,0 +1,88 @@
+{
+  "test_info": {
+    "timestamp": "2025-09-23T15:36:21.060391",
+    "keywords": [
+      "bitcoin",
+      "ethereum",
+      "cryptocurrency"
+    ],
+    "total_urls": 10,
+    "successful_extractions": 0,
+    "failed_extractions": 10,
+    "success_rate_percent": 0.0,
+    "target_rate_percent": 40,
+    "test_passed": false
+  },
+  "extraction_results": [
+    {
+      "id": 1,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMirgFBVV95cUxQRC1aaWJ3SDZjN3BKYzFUTGFyUEI5bmt1LXpQT3owWGlqdEFGRjc5cU9iX09naHdrNHA2bzNoaTVoVUhKd2xnbEliVm85QzdmZzZZeTcxSU1aQUFWS0xYZnZfd2xxNUt3ekxXN0pxMFFiRm1MVDB4ZkhaeTI5VHFFbVZucVlOcm9CazlDaUVnQ2FadVV2ZW5WekZHZWk5emFmOTZqS25QS0tuTXRjelE?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 2,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMic0FVX3lxTE5nRmhsMFRaRTZIN1A4U0xjSnRZQ2hzLV83VF9pQlVDbm1MTzdQLUExb1RGcEdMZXFfZlJLdGtUbWtXdkx6TXV2SlBBalhtZ0o5U3pZRVR5Ym5QS0V0c2Q1WUxlQUFHOWEwdUJHWHd1X0VYVjA?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 3,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMimgFBVV95cUxPYzViT0JzM2lWeHdyaktUWmJ3UG5WQS1FRlgwZDdBYXNmQWRkcGRETkp4THFFRzNLTHZuS0pxR0VJYUlFeWgwbWFZZlZLekZIamtuYkFZVWxJMEkyaEl5X3VYMWVna3RmLXNoVHRVajB6emZnVVUxeER4QVJZMUE4YlJVMEkxOEdScVp6dC1yZHM5aGd4cHpPdXBn?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 4,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMipgFBVV95cUxNbDR4X1JhRlJQVEFDSlNDUjhwVHJXanhmUkFTWW9zSi1LQkZyR0dLMWRqN2Q2bkhDTUtKcE5ndXR0RXdvcXJJdGdhMG1QQ2NDbjExSU9yQ0NVSG9odnJNTThBUVk0eFlhX2JKWXplRTdON0dTcVpGNWp1TmlVUVdwV0RKVzMtdTJxS1VBYW5NdkVGVUlublRMQmtZZ1AyT2lfTEFKd2ZB?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 5,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMipAFBVV95cUxONVNMSzNFSkhST19tSUZwRUFMZXZOcUFjX1pNSTFCYVRrejZyYjRvT3V4X012dHF4UndHbVdaYVFxM2lWa3haZkhCNUV2aFljR01LcEdlUWR1TDJvSndiRVJHeGJyc0diQ3VUY2lvcV8zTnh6bENZRDhybVlnYVd1d1pwVXhHRVJnRmdUQjhmY0gyeVhJWFFjenNhVHZzRC1JMzBnWQ?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 6,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMiWkFVX3lxTE5hQmxzN0t5Qnpnbnd6cFlPSFF0TEJWdGNfZE9KSlpacjdpTjYwTk5fTnpRTTlKSDl4VUZWY05mR1hiX2RqRFZVV1NEaXVEYlhubWZ6X2hMeWFhdw?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 7,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMiuAFBVV95cUxNRWtqUm1mdUZxdG1rbjhGNWxHendBS2w2VXRMN3hyTU9XTWtDdFd5dVNndWZIYlBtV0Zoc1Qtc0JsQmkyQWk4NkF5NkxGRDk4dndjSVUyeC05MGZ4dUJUcjA1NGJ2MUx2X0pCZFJaM3pVV21DY3I4b1RwOXBONWN2bFpLWmV4UWd5ZmtJSW5yOGdpX3VteEQwWXI4NWk5SFlaVnItTFhUSzBCaUtpc3kweV9UcVJISXlu?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 8,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMixwFBVV95cUxQUzdVME9LREUxcWF6eW5idXNUNG9NRVVtcXlWdmw0X3V1S2wxTjFuNnlSbi10Y2JKUlE4T3JJb0RGekZrVk1USFd2MEs5dmtMUGEyeWEzd1p5ZmVEYXhCQTczUVB3akp6bHdFVXg0czFQQWU0YVVPT21NSXNSeXhwVXpqN2p0N0dWSVFBV1dEWFZyZl9oYWQ2VnFsb1A4OUxrUklTeVBpOXcyLVp1YmhSOTNuM0NmeXFyU0tlUDEtRThnV3VveEJj?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 9,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMirAFBVV95cUxPeHhDaGVFcGRIS3FRYkt1bEZvWWNCckJnQXYwS080YVVVNjVaeEo4QW9pQktCZEVqdkI0UEhKMDd5bVhZelAydkhlYXNWS0NweUVjLVhrTU9xNkdScnFfUm11TTdWbG1QczE5S2xfS2hqMDdPX2tiS3g5a2RLZW1LaWQ0enRKZlA0LXlEb3pfNnAxd19nbS1XNEZxMjN2ZHFMYUc1RFpRbl83T1Jy?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    },
+    {
+      "id": 10,
+      "original_google_news_url": "https://news.google.com/rss/articles/CBMiowFBVV95cUxPRnJHSUxHTDZiS2ozeldwMFFiUGQwUHRxbGRwNy1ITS1zd3ZIaWtiZ0ZFbEptcEl2RnZKUTVoS2JtYUhSb3JicllWTDdhS3Z5VzdJYmR4QUVYZnRESTNEU3puZlhrejFUMEdEMmR3QmxlUEluOGh3cENJU2hYU29RT1FILVNWVk5wUnRJenp1RWFheFNuaTFhSk5QVG1HcmZWT1dB?oc=5&hl=en-US&gl=US&ceid=US:en",
+      "final_article_url": null,
+      "extraction_success": false,
+      "error_message": "No redirect from Google News"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ Uses synchronous operations and newspaper4k built-in threading
 to avoid event loop conflicts in Celery workers.
 """
 
+import asyncio
 import logging
 import sys
 import os
@@ -32,8 +33,16 @@ except ImportError as e:
 # Try to import playwright for fallback URL resolution
 try:
     from playwright.sync_api import sync_playwright
+    from playwright.async_api import async_playwright
 except ImportError:
     sync_playwright = None
+    async_playwright = None
+
+# Try to import cloudscraper for enhanced search reliability
+try:
+    import cloudscraper
+except ImportError:
+    cloudscraper = None
 
 from src.shared.config import Settings
 from src.shared.exceptions import (
@@ -56,14 +65,37 @@ class SyncCrawlerEngine:
         self.settings = settings
         self.logger = logger
 
+        # Adaptive timing statistics for performance learning
+        self._timing_stats = {
+            "avg_redirect_time": 4.0,  # Start with proven 4s baseline
+            "max_wait": 10.0,
+            "success_history": [],  # Track success patterns
+            "last_update": time.time()
+        }
+
         # Validate dependencies
         if not GoogleNewsSource:
             raise CrawlerError("GoogleNewsSource not available - check newspaper4k installation")
         if not fetch_news:
             raise CrawlerError("fetch_news not available - check newspaper4k installation")
 
+        # Initialize CloudScraper if available
+        self.scraper = None
+        if cloudscraper:
+            try:
+                self.scraper = cloudscraper.create_scraper(
+                    browser={'browser': 'chrome', 'platform': 'windows', 'desktop': True},
+                    delay=getattr(settings, 'CLOUDSCRAPER_DELAY', 1)
+                )
+                self.logger.info("CloudScraper initialized successfully for enhanced Google News access")
+            except Exception as e:
+                self.logger.warning(f"Failed to initialize CloudScraper: {e}")
+                self.scraper = None
+        else:
+            self.logger.warning("CloudScraper not available - install with: pip install cloudscraper")
+
     def resolve_google_news_urls(self, google_news_urls: List[str]) -> List[str]:
-        """Resolve Google News redirect URLs to actual article URLs.
+        """Resolve Google News URLs using 1 browser with 10 tabs (exact pattern from financial_news_extractor.py).
 
         This is the critical fix for the 0% success rate issue.
         Google News returns redirect URLs that newspaper4k cannot process.
@@ -80,82 +112,32 @@ class SyncCrawlerEngine:
         if not google_news_urls:
             return []
 
-        # CRITICAL FIX: Optimized circuit breaker to prevent timeouts and ensure article extraction
-        MAX_URLS_TO_PROCESS = getattr(self.settings, 'MAX_URLS_TO_PROCESS', 15)  # Reduced: ensure we finish URL resolution in time
-        MAX_PROCESSING_TIME = getattr(self.settings, 'MAX_URL_PROCESSING_TIME', 75)   # Reduced: allow time for article extraction phase
-
-        import time
-        start_time = time.time()
+        # CRITICAL FIX: Process in batches with 1 browser + 10 tabs like financial_news_extractor.py
+        MAX_URLS_TO_PROCESS = getattr(self.settings, 'MAX_URLS_TO_PROCESS', 15)
 
         # Limit the number of URLs to process
         urls_to_process = google_news_urls[:MAX_URLS_TO_PROCESS]
-        if len(google_news_urls) > MAX_URLS_TO_PROCESS:
-            self.logger.warning(f"Limiting URL processing to {MAX_URLS_TO_PROCESS} out of {len(google_news_urls)} URLs to prevent infinite loops")
+
+        self.logger.info(f"Resolving {len(urls_to_process)} Google News URLs using 1 browser with multi-tab strategy")
 
         resolved_urls = []
-        failed_count = 0
 
-        self.logger.info(f"Resolving {len(urls_to_process)} Google News URLs to actual article URLs (max time: {MAX_PROCESSING_TIME}s)")
+        if not sync_playwright:
+            self.logger.error("Playwright not available for URL resolution")
+            return []
 
-        for i, google_url in enumerate(urls_to_process):
-            # Circuit breaker: Check global time limit
-            elapsed_time = time.time() - start_time
-            if elapsed_time > MAX_PROCESSING_TIME:
-                self.logger.warning(f"URL resolution stopped after {elapsed_time:.1f}s to prevent infinite loops. Processed {i}/{len(urls_to_process)} URLs.")
-                break
+        try:
+            # Process URLs in batches of 10 (max tabs per browser)
+            batch_size = 10
+            for i in range(0, len(urls_to_process), batch_size):
+                batch = urls_to_process[i:i+batch_size]
+                self.logger.info(f"Processing batch {i//batch_size + 1}: {len(batch)} URLs with single browser")
 
-            # CRITICAL: Per-URL timeout to prevent single URLs from blocking entire job
-            url_start_time = time.time()
-            MAX_URL_TIME = 5  # Maximum 5 seconds per URL
+                batch_results = self._resolve_batch_with_single_browser(batch)
+                resolved_urls.extend(batch_results)
 
-            try:
-                # Strategy 1: Extract URL from Google News redirect parameter
-                resolved_url = self._extract_url_from_google_redirect(google_url)
-
-                if resolved_url:
-                    resolved_urls.append(resolved_url)
-                    continue
-
-                # CRITICAL: Check per-URL timeout after each strategy
-                if time.time() - url_start_time > MAX_URL_TIME:
-                    self.logger.warning(f"URL {i+1} timed out after {MAX_URL_TIME}s, skipping: {google_url[:100]}...")
-                    failed_count += 1
-                    continue
-
-                # Strategy 2: Follow redirects with requests
-                resolved_url = self._follow_redirect_with_requests(google_url)
-
-                if resolved_url:
-                    resolved_urls.append(resolved_url)
-                    continue
-
-                # CRITICAL: Check per-URL timeout after each strategy
-                if time.time() - url_start_time > MAX_URL_TIME:
-                    self.logger.warning(f"URL {i+1} timed out after {MAX_URL_TIME}s, skipping: {google_url[:100]}...")
-                    failed_count += 1
-                    continue
-
-                # Strategy 3: Simple regex-based URL extraction from the URL itself
-                resolved_url = self._extract_url_from_base64_or_encoded(google_url)
-                if resolved_url:
-                    resolved_urls.append(resolved_url)
-                    continue
-
-                # Strategy 4: Playwright fallback for JavaScript redirects (only if enabled and other methods failed)
-                if sync_playwright and getattr(self.settings, 'ENABLE_JAVASCRIPT_RENDERING', False):
-                    resolved_url = self._resolve_with_playwright(google_url)
-
-                    if resolved_url:
-                        resolved_urls.append(resolved_url)
-                        continue
-
-                failed_count += 1
-                self.logger.warning(f"Failed to resolve URL {i+1}/{len(google_news_urls)}: {google_url[:100]}...")
-
-            except Exception as e:
-                failed_count += 1
-                self.logger.warning(f"Error resolving URL {i+1}/{len(google_news_urls)}: {e}")
-                continue
+        except Exception as e:
+            self.logger.error(f"Batch URL resolution failed: {e}")
 
         success_rate = (len(resolved_urls) / len(google_news_urls)) * 100 if google_news_urls else 0
         self.logger.info(f"URL resolution completed: {len(resolved_urls)}/{len(google_news_urls)} URLs resolved ({success_rate:.1f}% success rate)")
@@ -165,93 +147,298 @@ class SyncCrawlerEngine:
 
         return resolved_urls
 
-    def _extract_url_from_google_redirect(self, google_url: str) -> Optional[str]:
-        """Extract actual URL from Google News redirect parameter.
+    def _resolve_batch_with_single_browser(self, urls_batch: List[str]) -> List[str]:
+        """Process URLs with multi-tab strategy and adaptive monitoring (sync version)."""
+        resolved_urls = []
 
-        Google News URLs often contain the actual URL as a parameter.
-        """
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-gpu',
+                    '--disable-web-security',
+                    '--disable-features=VizDisplayCompositor',
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding'
+                ]
+            )
+
+            try:
+                # Open all tabs first (up to 10)
+                tabs_data = []
+                for i, url in enumerate(urls_batch[:10]):
+                    try:
+                        self.logger.info(f"      Tab {i+1}: Opening {url[:60]}...")
+                        page = browser.new_page()
+
+                        # Block resources for speed
+                        page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
+
+                        # Set realistic headers
+                        page.set_extra_http_headers({
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                        })
+
+                        # Navigate to URL
+                        page.goto(url, wait_until='domcontentloaded', timeout=30000)
+
+                        # Store tab data for monitoring
+                        tabs_data.append((page, url, i, time.time()))
+
+                        # Small delay between tab openings
+                        time.sleep(0.5)
+
+                    except Exception as e:
+                        self.logger.error(f"Tab {i+1} opening failed: {e}")
+                        continue
+
+                # Monitor all tabs simultaneously with sync approach
+                if tabs_data:
+                    self.logger.info(f"    Starting sync monitoring for {len(tabs_data)} tabs...")
+                    resolved_urls = self._monitor_tabs_sync(tabs_data)
+
+                # Close all tabs
+                for page, _, _, _ in tabs_data:
+                    try:
+                        page.close()
+                    except:
+                        pass
+
+            finally:
+                browser.close()
+
+        return resolved_urls
+
+    def _monitor_tabs_sync(self, tabs_data: List) -> List[str]:
+        """Monitor all tabs simultaneously for immediate URL extraction after JS rendering."""
+        resolved_urls = []
+        max_wait_time = self._timing_stats["max_wait"]
+
+        self.logger.info(f"    Monitoring {len(tabs_data)} tabs for JS rendering completion...")
+
+        # Monitor all tabs in a loop with round-robin checking
+        start_time = time.time()
+        resolved_tabs = set()  # Track which tabs are already resolved
+
+        while time.time() - start_time < max_wait_time and len(resolved_tabs) < len(tabs_data):
+            for i, (page, original_url, tab_id, _) in enumerate(tabs_data):
+                if i in resolved_tabs:
+                    continue
+
+                try:
+                    current_url = page.url
+                    elapsed = time.time() - start_time
+
+                    # Check if URL changed and redirected away from Google
+                    if current_url != original_url and 'news.google.com' not in current_url:
+                        resolved_urls.append(current_url)
+                        resolved_tabs.add(i)
+                        self.logger.info(f"      Tab {tab_id+1}: JS redirect found at {elapsed:.1f}s -> {current_url[:60]}...")
+                        continue
+
+                    # Try network idle fallback after 4 seconds
+                    if elapsed > 4 and current_url == original_url:
+                        try:
+                            page.wait_for_load_state('networkidle', timeout=2000)
+                            current_url = page.url
+                            if current_url != original_url and 'news.google.com' not in current_url:
+                                resolved_urls.append(current_url)
+                                resolved_tabs.add(i)
+                                self.logger.info(f"      Tab {tab_id+1}: Fallback redirect at {elapsed:.1f}s -> {current_url[:60]}...")
+                                continue
+                        except:
+                            pass
+
+                except Exception as e:
+                    self.logger.warning(f"      Tab {tab_id+1}: Monitoring error: {e}")
+                    resolved_tabs.add(i)  # Mark as failed to avoid infinite loop
+                    continue
+
+            # Small delay between rounds
+            time.sleep(0.1)
+
+        # Log failed tabs
+        for i, (_, original_url, tab_id, _) in enumerate(tabs_data):
+            if i not in resolved_tabs:
+                self.logger.warning(f"      Tab {tab_id+1}: No redirect found within {max_wait_time}s")
+
+        self.logger.info(f"    Sync monitoring completed: {len(resolved_urls)}/{len(tabs_data)} URLs resolved")
+        return resolved_urls
+
+    async def _monitor_tabs_with_event_detection_async(self, tabs_data: List) -> List[str]:
+        """Monitor all tabs with adaptive event-driven detection for immediate URL extraction."""
+        import concurrent.futures
+
+        resolved_urls = []
+        redirect_times = []  # Track individual redirect times for learning
+
+        # Use adaptive timing based on historical performance
+        max_wait_time = self._timing_stats["max_wait"]
+        avg_time = self._timing_stats["avg_redirect_time"]
+
+        self.logger.info(f"    Starting adaptive monitoring for {len(tabs_data)} tabs (avg: {avg_time:.1f}s, max: {max_wait_time:.1f}s)...")
+
+        # Use async parallel monitoring
+        tasks = []
+        for i, (page, original_url, tab_id, _) in enumerate(tabs_data):
+            task = asyncio.create_task(self._monitor_single_tab_adaptive_async(page, original_url, tab_id, max_wait_time))
+            tasks.append(task)
+
+        # Wait for all tasks to complete with timeout
         try:
-            parsed = urlparse(google_url)
+            results = await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=max_wait_time + 2)
+            for result in results:
+                if isinstance(result, Exception):
+                    self.logger.warning(f"Tab monitoring failed: {result}")
+                elif result:
+                    url, redirect_time = result
+                    resolved_urls.append(url)
+                    redirect_times.append(redirect_time)
+        except asyncio.TimeoutError:
+            self.logger.warning(f"Monitoring timed out after {max_wait_time + 2}s")
 
-            # Check for 'url' parameter in query string
-            query_params = parse_qs(parsed.query)
-            if 'url' in query_params and query_params['url']:
-                actual_url = query_params['url'][0]
-                if actual_url.startswith('http'):
-                    return actual_url
+        # Update adaptive timing statistics
+        if redirect_times:
+            self._update_timing_stats(redirect_times, len(resolved_urls), len(tabs_data))
 
-            # Check for URL in the path (some Google News formats)
-            if '/articles/' in google_url and 'url=' in google_url:
-                url_start = google_url.find('url=') + 4
-                url_end = google_url.find('&', url_start)
-                if url_end == -1:
-                    url_end = len(google_url)
+        self.logger.info(f"    Adaptive monitoring completed: {len(resolved_urls)} URLs resolved")
+        return resolved_urls
 
-                potential_url = google_url[url_start:url_end]
-                if potential_url.startswith('http'):
-                    return potential_url
+    def _monitor_single_tab(self, page, original_url: str, tab_id: int, max_wait: float) -> Optional[str]:
+        """Monitor a single tab for URL changes with sub-second precision."""
+        import time
 
-        except Exception as e:
-            self.logger.warning(f"Failed to extract URL from redirect parameter: {e}")
+        start_time = time.time()
+        last_url = original_url
 
+        while time.time() - start_time < max_wait:
+            try:
+                current_url = page.url
+
+                # Check if URL changed and redirected away from Google
+                if current_url != last_url:
+                    elapsed = time.time() - start_time
+                    self.logger.info(f"      Tab {tab_id+1}: URL changed at {elapsed:.1f}s: {current_url[:50]}...")
+
+                    if current_url != original_url and 'news.google.com' not in current_url:
+                        self.logger.info(f"      Tab {tab_id+1}: Resolved in {elapsed:.1f}s -> {current_url[:50]}...")
+                        return current_url
+
+                    last_url = current_url
+
+                # If no redirect after some time, try fallback strategy
+                if time.time() - start_time > 3 and current_url == original_url:
+                    try:
+                        page.wait_for_load_state('networkidle', timeout=2000)
+                        current_url = page.url
+                        if current_url != original_url and 'news.google.com' not in current_url:
+                            elapsed = time.time() - start_time
+                            self.logger.info(f"      Tab {tab_id+1}: Fallback resolved in {elapsed:.1f}s -> {current_url[:50]}...")
+                            return current_url
+                    except:
+                        pass
+
+                time.sleep(0.1)  # Check every 100ms for responsiveness
+
+            except Exception as e:
+                self.logger.warning(f"      Tab {tab_id+1}: Monitoring error: {e}")
+                break
+
+        self.logger.warning(f"      Tab {tab_id+1}: No redirect found within {max_wait}s")
         return None
 
-    def _extract_url_from_base64_or_encoded(self, google_url: str) -> Optional[str]:
-        """Extract URL from base64 or encoded Google News URL components.
+    async def _monitor_single_tab_adaptive_async(self, page, original_url: str, tab_id: int, max_wait: float) -> Optional[tuple]:
+        """Monitor a single tab with adaptive timing and return URL + redirect time."""
+        import time
 
-        Args:
-            google_url: Google News URL that might contain encoded article URL
+        start_time = time.time()
+        last_url = original_url
 
-        Returns:
-            Decoded article URL or None if not found
-        """
-        import base64
-        import urllib.parse
+        while time.time() - start_time < max_wait:
+            try:
+                current_url = page.url
 
-        try:
-            # Google News URLs sometimes contain the actual URL in encoded form
-            # Check for base64 encoded URLs in the path
-            if '/articles/' in google_url:
-                # Extract the article ID part
-                article_id = google_url.split('/articles/')[-1].split('?')[0]
+                # Check if URL changed and redirected away from Google
+                if current_url != last_url:
+                    elapsed = time.time() - start_time
+                    self.logger.info(f"      Tab {tab_id+1}: URL changed at {elapsed:.1f}s: {current_url[:50]}...")
 
-                # Try to decode as base64 (sometimes URLs are base64 encoded)
-                try:
-                    # Remove any URL-safe base64 characters and try decoding
-                    cleaned_id = article_id.replace('-', '+').replace('_', '/')
-                    # Add padding if needed
-                    while len(cleaned_id) % 4:
-                        cleaned_id += '='
+                    if current_url != original_url and 'news.google.com' not in current_url:
+                        self.logger.info(f"      Tab {tab_id+1}: Resolved in {elapsed:.1f}s -> {current_url[:50]}...")
+                        return (current_url, elapsed)  # Return URL and timing
 
-                    decoded = base64.b64decode(cleaned_id).decode('utf-8', errors='ignore')
+                    last_url = current_url
 
-                    # Look for HTTP URLs in the decoded content
-                    if 'http' in decoded:
-                        # Extract URL using regex
-                        import re
-                        url_pattern = r'https?://[^\s<>"\'\[\]{}|\\^`]*'
-                        urls = re.findall(url_pattern, decoded)
-                        for url in urls:
-                            if 'google.com' not in url and url.startswith('http'):
-                                self.logger.info(f"Extracted URL from base64: {url}")
-                                return url
+                # Use adaptive fallback timing based on learned patterns
+                avg_time = self._timing_stats["avg_redirect_time"]
+                if time.time() - start_time > avg_time and current_url == original_url:
+                    try:
+                        await page.wait_for_load_state('networkidle', timeout=2000)
+                        current_url = page.url
+                        if current_url != original_url and 'news.google.com' not in current_url:
+                            elapsed = time.time() - start_time
+                            self.logger.info(f"      Tab {tab_id+1}: Adaptive fallback resolved in {elapsed:.1f}s -> {current_url[:50]}...")
+                            return (current_url, elapsed)
+                    except:
+                        pass
 
-                except Exception:
-                    pass  # Base64 decoding failed, continue with other methods
+                await asyncio.sleep(0.1)  # Check every 100ms for responsiveness
 
-                # Try URL decoding
-                try:
-                    decoded_url = urllib.parse.unquote(article_id)
-                    if decoded_url.startswith('http') and 'google.com' not in decoded_url:
-                        self.logger.info(f"Extracted URL from URL encoding: {decoded_url}")
-                        return decoded_url
-                except Exception:
-                    pass
+            except Exception as e:
+                self.logger.warning(f"      Tab {tab_id+1}: Monitoring error: {e}")
+                break
 
-        except Exception as e:
-            self.logger.debug(f"Base64/encoded URL extraction failed: {e}")
-
+        self.logger.warning(f"      Tab {tab_id+1}: No redirect found within {max_wait}s")
         return None
+
+    def _update_timing_stats(self, redirect_times: List[float], successful: int, total: int):
+        """Update adaptive timing statistics based on current batch performance."""
+        if not redirect_times:
+            return
+
+        # Calculate current batch metrics
+        avg_redirect_time = sum(redirect_times) / len(redirect_times)
+        success_rate = successful / total if total > 0 else 0
+
+        # Update running averages with decay factor
+        decay = 0.8  # Weight current data higher than historical
+        self._timing_stats["avg_redirect_time"] = (
+            decay * avg_redirect_time +
+            (1 - decay) * self._timing_stats["avg_redirect_time"]
+        )
+
+        # Adjust max wait time based on success rate
+        if success_rate > 0.8:  # >80% success rate
+            self._timing_stats["max_wait"] = max(
+                self._timing_stats["avg_redirect_time"] + 2.0,  # Give 2s buffer
+                6.0  # Minimum of 6s
+            )
+        elif success_rate < 0.4:  # <40% success rate
+            self._timing_stats["max_wait"] = min(
+                self._timing_stats["max_wait"] + 2.0,  # Increase wait time
+                15.0  # Maximum of 15s
+            )
+
+        # Store recent performance for analysis
+        self._timing_stats["success_history"].append({
+            "timestamp": time.time(),
+            "avg_time": avg_redirect_time,
+            "success_rate": success_rate,
+            "batch_size": total
+        })
+
+        # Keep only last 10 batches for learning
+        if len(self._timing_stats["success_history"]) > 10:
+            self._timing_stats["success_history"] = self._timing_stats["success_history"][-10:]
+
+        self.logger.info(
+            f"    Adaptive timing updated: avg={self._timing_stats['avg_redirect_time']:.1f}s, "
+            f"max={self._timing_stats['max_wait']:.1f}s, success_rate={success_rate:.1%}"
+        )
+
 
     def _follow_redirect_with_requests(self, google_url: str) -> Optional[str]:
         """Follow redirects using requests to get the final URL.
@@ -324,36 +511,108 @@ class SyncCrawlerEngine:
             Final resolved URL or None if failed
         """
         import re
-
         try:
             with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--max_old_space_size=512']
+                )
                 page = browser.new_page()
+
+                # Ultra-fast settings - block images/CSS for speed
+                page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
 
                 # Set user agent to avoid detection
                 page.set_extra_http_headers({
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 })
 
-                # Set timeout
-                page.set_default_timeout(10000)  # 10 seconds
+                # Set timeout to 30 seconds max per Story 2.4
+                page.set_default_timeout(30000)  # 30 seconds
 
                 # Navigate to Google News URL
-                response = page.goto(google_url)
+                page.goto(google_url, wait_until='domcontentloaded', timeout=30000)
 
-                # Check if we got redirected away from Google
+                # Wait for potential redirect
+                time.sleep(4)
                 final_url = page.url
-                if final_url and 'google.com' not in final_url and final_url.startswith('http'):
+
+                # Log the current URL for debugging
+                self.logger.debug(f"After initial wait, URL: {final_url}")
+
+                # Check if URL has changed (redirect happened)
+                if final_url != google_url and 'news.google.com' not in final_url:
+                    self.logger.info(f"Direct redirect found: {final_url}")
+                    page.close()
                     browser.close()
                     return final_url
 
-                # If still on Google domain, try to extract the actual article URL from page content
-                if response and response.status == 200:
-                    # Wait briefly for any dynamic content
-                    time.sleep(1)
+                # If still on Google News, wait a bit more and try again
+                if 'news.google.com' in final_url:
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                    time.sleep(5)  # Additional wait
+                    final_url = page.url
+                    self.logger.debug(f"After network idle wait, URL: {final_url}")
 
-                    # Get page content
-                    content = page.content()
+                    if final_url != google_url and 'news.google.com' not in final_url:
+                        self.logger.info(f"Delayed redirect found: {final_url}")
+                        page.close()
+                        browser.close()
+                        return final_url
+
+                page.close()
+                browser.close()
+
+        except Exception as e:
+            self.logger.warning(f"Playwright URL resolution failed: {e}")
+        return None
+
+    async def _resolve_with_playwright_async(self, google_url: str) -> Optional[str]:
+        """Async implementation of Playwright URL resolution."""
+        import re
+
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--max_old_space_size=512']
+                )
+                page = await browser.new_page()
+
+                # Ultra-fast settings - block images/CSS for speed
+                await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
+
+                # Set user agent to avoid detection
+                await page.set_extra_http_headers({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                })
+
+                # Set timeout to 30 seconds max per Story 2.4
+                page.set_default_timeout(30000)  # 30 seconds
+
+                # Navigate to Google News URL with domcontentloaded
+                response = await page.goto(google_url, wait_until='domcontentloaded', timeout=30000)
+
+                # Wait for JS redirect - critical 4 seconds per financial_news_extractor.py
+                await asyncio.sleep(4)
+                final_url = page.url
+
+                # If no redirect, wait longer (exact logic from financial_news_extractor.py)
+                if final_url == google_url or 'news.google.com' in final_url:
+                    try:
+                        await page.wait_for_load_state('networkidle', timeout=15000)
+                        await asyncio.sleep(5)  # CRITICAL: Must be 5 seconds like financial_news_extractor.py
+                        final_url = page.url
+                    except:
+                        pass
+
+                    # If successfully redirected after longer wait
+                    if final_url and 'google.com' not in final_url and final_url.startswith('http'):
+                        await browser.close()
+                        return final_url
+
+                    # Get page content for URL extraction
+                    content = await page.content()
 
                     # Look for actual article URLs in the page content
                     url_patterns = [
@@ -377,7 +636,7 @@ class SyncCrawlerEngine:
                                 not clean_url.endswith('.jpg')):
                                 found_urls.add(clean_url)
 
-                    browser.close()
+                    await browser.close()
 
                     if found_urls:
                         # Return the first valid URL found
@@ -387,11 +646,209 @@ class SyncCrawlerEngine:
                     else:
                         self.logger.warning(f"No external URLs found in Google News page content")
                 else:
-                    browser.close()
+                    await browser.close()
                     self.logger.warning(f"Failed to load Google News page, status: {response.status if response else 'None'}")
 
         except Exception as e:
-            self.logger.warning(f"Playwright URL resolution failed: {e}")
+            self.logger.warning(f"Async Playwright URL resolution failed: {e}")
+
+        return None
+
+    def _resolve_with_playwright_enhanced(self, google_url: str) -> Optional[str]:
+        """Enhanced Playwright URL resolution with CloudScraper session integration.
+
+        Uses CloudScraper session cookies and headers to improve success rate.
+
+        Args:
+            google_url: Google News URL to resolve
+
+        Returns:
+            Final resolved URL or None if failed
+        """
+        if not self.scraper:
+            # Fallback to standard Playwright
+            return self._resolve_with_playwright(google_url)
+
+        try:
+            # Convert to sync implementation
+            return self._resolve_with_playwright_enhanced_sync(google_url)
+        except Exception as e:
+            self.logger.warning(f"Enhanced Playwright URL resolution failed: {e}")
+            # Fallback to standard Playwright
+            return self._resolve_with_playwright(google_url)
+
+    def _resolve_with_playwright_enhanced_sync(self, google_url: str) -> Optional[str]:
+        """Sync enhanced Playwright URL resolution with CloudScraper integration."""
+        try:
+            # Pre-warm with CloudScraper request to get session cookies
+            self.logger.debug(f"Pre-warming CloudScraper session for: {google_url[:50]}...")
+
+            # Make a quick HEAD request to establish session
+            head_response = self.scraper.head(google_url, timeout=10)
+            cookies = head_response.cookies
+
+            with sync_playwright() as p:
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--max_old_space_size=512']
+                )
+
+                # Create browser context with CloudScraper cookies
+                context = browser.new_context()
+
+                # Add CloudScraper cookies to context
+                if cookies:
+                    cookie_list = []
+                    for cookie in cookies:
+                        cookie_dict = {
+                            'name': cookie.name,
+                            'value': cookie.value,
+                            'domain': cookie.domain or '.google.com',
+                            'path': cookie.path or '/',
+                        }
+                        if cookie.secure:
+                            cookie_dict['secure'] = True
+                        if cookie.expires:
+                            cookie_dict['expires'] = cookie.expires
+                        cookie_list.append(cookie_dict)
+
+                    if cookie_list:
+                        context.add_cookies(cookie_list)
+                        self.logger.debug(f"Added {len(cookie_list)} CloudScraper cookies to Playwright context")
+
+                page = context.new_page()
+
+                # Ultra-fast settings - block images/CSS for speed
+                page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
+
+                # Use CloudScraper's User-Agent for consistency
+                page.set_extra_http_headers({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en,en-US;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                })
+
+                # Set timeout to 30 seconds max per Story 2.4
+                page.set_default_timeout(30000)
+
+                # Navigate to Google News URL
+                response = page.goto(google_url, wait_until='domcontentloaded', timeout=30000)
+
+                if response and response.status == 200:
+                    # Wait for potential redirect
+                    time.sleep(4)
+                    final_url = page.url
+
+                    if final_url != google_url and 'news.google.com' not in final_url:
+                        self.logger.info(f"Enhanced direct redirect found: {final_url}")
+                        page.close()
+                        browser.close()
+                        return final_url
+
+                    # If still on Google News, wait for network idle and try again
+                    if 'news.google.com' in final_url:
+                        page.wait_for_load_state('networkidle', timeout=15000)
+                        time.sleep(5)
+                        final_url = page.url
+
+                        if final_url != google_url and 'news.google.com' not in final_url:
+                            self.logger.info(f"Enhanced delayed redirect found: {final_url}")
+                            page.close()
+                            browser.close()
+                            return final_url
+
+                page.close()
+                browser.close()
+
+        except Exception as e:
+            self.logger.warning(f"Enhanced Playwright URL resolution failed: {e}")
+
+        return None
+
+    async def _resolve_with_playwright_enhanced_async(self, google_url: str) -> Optional[str]:
+        """Async enhanced Playwright URL resolution."""
+        try:
+            # Pre-warm with CloudScraper request to get session cookies
+            self.logger.debug(f"Pre-warming CloudScraper session for: {google_url[:50]}...")
+
+            # Make a quick HEAD request to establish session
+            head_response = self.scraper.head(google_url, timeout=10)
+            cookies = head_response.cookies
+
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--max_old_space_size=512']
+                )
+
+                # Create browser context with CloudScraper cookies
+                context = await browser.new_context()
+
+                # Add CloudScraper cookies to context
+                if cookies:
+                    cookie_list = []
+                    for cookie in cookies:
+                        cookie_dict = {
+                            'name': cookie.name,
+                            'value': cookie.value,
+                            'domain': cookie.domain or '.google.com',
+                            'path': cookie.path or '/',
+                        }
+                        if cookie.secure:
+                            cookie_dict['secure'] = True
+                        if cookie.expires:
+                            cookie_dict['expires'] = cookie.expires
+                        cookie_list.append(cookie_dict)
+
+                    if cookie_list:
+                        await context.add_cookies(cookie_list)
+                        self.logger.debug(f"Added {len(cookie_list)} CloudScraper cookies to Playwright context")
+
+                page = await context.new_page()
+
+                # Ultra-fast settings - block images/CSS for speed
+                await page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,woff2,ttf,eot,ico}", lambda route: route.abort())
+
+                # Use CloudScraper's User-Agent for consistency
+                await page.set_extra_http_headers({
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en,en-US;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                })
+
+                # Set timeout to 30 seconds max
+                page.set_default_timeout(30000)
+
+                # Navigate to Google News URL
+                response = await page.goto(google_url, wait_until='domcontentloaded', timeout=30000)
+
+                # Wait for JS redirect - critical timing from financial_news_extractor.py
+                await asyncio.sleep(4)
+                final_url = page.url
+
+                # If no redirect, wait longer (exact logic from financial_news_extractor.py)
+                if final_url == google_url or 'news.google.com' in final_url:
+                    try:
+                        await page.wait_for_load_state('networkidle', timeout=15000)
+                        await asyncio.sleep(5)  # CRITICAL: Must be 5 seconds like financial_news_extractor.py
+                        final_url = page.url
+                    except:
+                        pass
+
+                # Validate successful redirect
+                if final_url and 'google.com' not in final_url and final_url.startswith('http'):
+                    await browser.close()
+                    self.logger.debug(f"Enhanced Playwright resolved: {final_url[:50]}...")
+                    return final_url
+
+                await browser.close()
+
+        except Exception as e:
+            self.logger.warning(f"Async enhanced Playwright URL resolution failed: {e}")
 
         return None
 
@@ -493,6 +950,153 @@ class SyncCrawlerEngine:
             error_msg = f"Failed to search Google News: {str(e)}"
             self.logger.error(error_msg)
             raise GoogleNewsUnavailableError(error_msg) from e
+
+    def search_google_news_with_cloudscraper(
+        self,
+        keywords: List[str],
+        exclude_keywords: List[str] = None,
+        max_results: int = 100,
+        language: str = "en",
+        country: str = "US"
+    ) -> List[str]:
+        """Enhanced Google News search using CloudScraper for better reliability.
+
+        This method provides an alternative search when GNews fails due to blocking.
+        Uses CloudScraper to directly search Google News website and parse results.
+
+        Args:
+            keywords: List of keywords to search for (OR logic)
+            exclude_keywords: List of keywords to exclude from results
+            max_results: Maximum number of results to return
+            language: Language code for search results
+            country: Country code for search results
+
+        Returns:
+            List of Google News URLs for further processing
+
+        Raises:
+            GoogleNewsUnavailableError: If search fails
+        """
+        if not self.scraper:
+            self.logger.warning("CloudScraper not available, falling back to standard search")
+            return self.search_google_news(keywords, exclude_keywords, max_results, language, country)
+
+        if not keywords:
+            raise GoogleNewsUnavailableError("Keywords list cannot be empty")
+
+        try:
+            # Build search query with OR logic for keywords
+            search_query = " OR ".join(f'"{keyword}"' for keyword in keywords)
+
+            # Add exclusions if provided
+            if exclude_keywords:
+                exclusions = " ".join(f'-"{keyword}"' for keyword in exclude_keywords)
+                search_query = f"{search_query} {exclusions}"
+
+            self.logger.info(f"CloudScraper search with query: {search_query}")
+
+            # Build Google News search URL
+            import urllib.parse
+            encoded_query = urllib.parse.quote(search_query)
+            google_news_url = f"https://news.google.com/search?q={encoded_query}&hl={language}&gl={country}&ceid={country}:{language}"
+
+            # Add CloudScraper delay
+            delay = getattr(self.settings, 'CLOUDSCRAPER_DELAY', 1)
+            if delay > 0:
+                time.sleep(delay)
+
+            # Make request with CloudScraper
+            response = self.scraper.get(
+                google_news_url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': f'{language},{language[:2]};q=0.9,en;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                }
+            )
+
+            if response.status_code != 200:
+                self.logger.warning(f"CloudScraper received status code {response.status_code}")
+                # Fallback to standard method
+                return self.search_google_news(keywords, exclude_keywords, max_results, language, country)
+
+            # Parse Google News HTML to extract article URLs
+            google_news_urls = self._parse_google_news_html(response.text, max_results)
+
+            if not google_news_urls:
+                self.logger.warning("No URLs found in CloudScraper search results")
+                return []
+
+            self.logger.info(f"CloudScraper found {len(google_news_urls)} Google News URLs")
+
+            # Resolve the URLs using existing methods
+            resolved_urls = self.resolve_google_news_urls(google_news_urls)
+
+            self.logger.info(f"CloudScraper resolved {len(resolved_urls)} URLs from {len(google_news_urls)} found")
+            return resolved_urls
+
+        except Exception as e:
+            error_msg = f"CloudScraper search failed: {str(e)}"
+            self.logger.error(error_msg)
+            # Fallback to standard search
+            self.logger.info("Falling back to standard Google News search")
+            return self.search_google_news(keywords, exclude_keywords, max_results, language, country)
+
+    def _parse_google_news_html(self, html_content: str, max_results: int = 100) -> List[str]:
+        """Parse Google News HTML to extract article URLs.
+
+        Args:
+            html_content: HTML content from Google News page
+            max_results: Maximum number of URLs to extract
+
+        Returns:
+            List of Google News article URLs
+        """
+        google_news_urls = []
+
+        try:
+            import re
+
+            # Enhanced regex patterns for Google News URLs
+            patterns = [
+                # Current Google News format
+                r'href="(\./articles/[^"]*)"',
+                r'href="(https://news\.google\.com/articles/[^"]*)"',
+                # Alternative patterns
+                r'<a[^>]*href="([^"]*articles/[^"]*)"[^>]*>',
+                r'data-url="([^"]*articles/[^"]*)"',
+            ]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, html_content)
+                for match in matches:
+                    # Clean and normalize URL
+                    if match.startswith('./'):
+                        url = f"https://news.google.com{match[1:]}"
+                    elif match.startswith('https://'):
+                        url = match
+                    else:
+                        url = f"https://news.google.com{match}"
+
+                    # Validate URL format and avoid duplicates
+                    if 'articles/' in url and url not in google_news_urls:
+                        google_news_urls.append(url)
+
+                        if len(google_news_urls) >= max_results:
+                            break
+
+                if len(google_news_urls) >= max_results:
+                    break
+
+            self.logger.info(f"Extracted {len(google_news_urls)} Google News URLs from HTML")
+            return google_news_urls[:max_results]
+
+        except Exception as e:
+            self.logger.error(f"Failed to parse Google News HTML: {e}")
+            return []
 
     def extract_articles_with_threading(
         self,
