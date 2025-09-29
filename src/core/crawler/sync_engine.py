@@ -1170,7 +1170,7 @@ class SyncCrawlerEngine:
             self.logger.error(error_msg)
             raise ExtractionError(error_msg) from e
 
-    def crawl_category_sync(self, category: Any) -> List[Dict[str, Any]]:
+    def crawl_category_sync(self, category: Any, job_id: str = None) -> List[Dict[str, Any]]:
         """Crawl articles for a category using sync operations.
 
         Args:
@@ -1224,7 +1224,7 @@ class SyncCrawlerEngine:
 
                 article_repo = SyncArticleRepository()
                 saved_count = article_repo.save_articles_with_deduplication(
-                    extracted_articles, category.id
+                    extracted_articles, category.id, job_id
                 )
 
                 self.logger.info(f"Crawled {len(extracted_articles)} articles, saved {saved_count} to database for category: {category.name}")

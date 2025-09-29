@@ -11,7 +11,6 @@ from sqlalchemy.orm import selectinload
 from src.database.repositories.sync_base import SyncBaseRepository
 from src.database.models.article import Article
 from src.database.models.category import Category
-from src.database.models.article_category import ArticleCategory
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,8 @@ class SyncArticleRepository(SyncBaseRepository[Article]):
     def save_articles_with_deduplication(
         self,
         articles_data: List[Dict[str, Any]],
-        category_id: UUID
+        category_id: UUID,
+        job_id: str = None
     ) -> int:
         """Save articles with deduplication logic.
 
@@ -48,10 +48,10 @@ class SyncArticleRepository(SyncBaseRepository[Article]):
             with self.get_session() as session:
                 for article_data in articles_data:
                     try:
-                        # Generate URL hash for deduplication
-                        source_url = article_data.get('source_url', '')
+                        # Generate URL hash for deduplication - support both 'url' and 'source_url' fields
+                        source_url = article_data.get('source_url') or article_data.get('url', '')
                         if not source_url:
-                            logger.warning("Article missing source_url, skipping")
+                            logger.warning("Article missing url/source_url, skipping")
                             continue
 
                         url_hash = self._generate_url_hash(source_url)
@@ -65,26 +65,13 @@ class SyncArticleRepository(SyncBaseRepository[Article]):
                             # Update last_seen for existing article
                             existing_article.last_seen = datetime.now(timezone.utc)
 
-                            # Check if this category association already exists
-                            existing_association = session.execute(
-                                select(ArticleCategory).where(
-                                    and_(
-                                        ArticleCategory.article_id == existing_article.id,
-                                        ArticleCategory.category_id == category_id
-                                    )
-                                )
-                            ).scalar_one_or_none()
-
-                            if not existing_association:
-                                # Create new category association
-                                article_category = ArticleCategory(
-                                    article_id=existing_article.id,
-                                    category_id=category_id,
-                                    relevance_score=1.0,
-                                    keyword_matched=article_data.get('keyword_matched'),
-                                    search_query_used=article_data.get('search_query_used')
-                                )
-                                session.add(article_category)
+                            # Update keywords if new ones found
+                            existing_keywords = existing_article.keywords_matched or []
+                            new_keywords = article_data.get('keywords_matched', [])
+                            if new_keywords:
+                                # Merge unique keywords
+                                merged_keywords = list(set(existing_keywords + new_keywords))
+                                existing_article.keywords_matched = merged_keywords
 
                             session.commit()
                             logger.debug(f"Updated existing article: {existing_article.title}")
@@ -97,26 +84,15 @@ class SyncArticleRepository(SyncBaseRepository[Article]):
                             source_url=source_url,
                             url_hash=url_hash,
                             author=article_data.get('author', '').strip() or None,
-                            published_date=article_data.get('published_date'),
-                            image_url=article_data.get('image_url', '').strip() or None,
-                            summary=article_data.get('summary', '').strip() or None,
-                            language=article_data.get('language', 'vi'),
-                            word_count=len(article_data.get('content', '').split()) if article_data.get('content') else 0,
-                            last_seen=datetime.now(timezone.utc)
+                            publish_date=article_data.get('publish_date'),
+                            image_url=article_data.get('image_url') or article_data.get('top_image', '').strip() or None,
+                            last_seen=datetime.now(timezone.utc),
+                            keywords_matched=article_data.get('keywords_matched', []),
+                            relevance_score=1.0,
+                            crawl_job_id=UUID(job_id) if job_id else None
                         )
 
                         session.add(new_article)
-                        session.flush()  # Get the article ID
-
-                        # Create category association
-                        article_category = ArticleCategory(
-                            article_id=new_article.id,
-                            category_id=category_id,
-                            relevance_score=1.0,
-                            keyword_matched=article_data.get('keyword_matched'),
-                            search_query_used=article_data.get('search_query_used')
-                        )
-                        session.add(article_category)
 
                         session.commit()
                         saved_count += 1

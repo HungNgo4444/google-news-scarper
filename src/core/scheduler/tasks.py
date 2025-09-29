@@ -168,7 +168,7 @@ def _sync_crawl_category_task(
         )
 
         # Execute crawl using sync operations
-        crawl_result = sync_crawler.crawl_category_sync(category)
+        crawl_result = sync_crawler.crawl_category_sync(category, job_id)
 
         # Handle both old list format and new dict format for backward compatibility
         if isinstance(crawl_result, dict):
