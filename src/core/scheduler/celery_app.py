@@ -7,6 +7,17 @@ from kombu.serialization import register
 
 from src.shared.config import get_settings
 
+# Reduce verbose logging from HTTP libraries
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("requests.packages.urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests.packages.urllib3.connectionpool").setLevel(logging.WARNING)
+logging.getLogger("newspaper.network").setLevel(logging.WARNING)
+logging.getLogger("newspaper.article").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 settings = get_settings()

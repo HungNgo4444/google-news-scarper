@@ -801,8 +801,9 @@ class ArticleExtractor:
                     extra={"batch_size": len(urls_batch)}
                 )
 
-                # Process each URL in separate tab (max 10)
-                for i, url in enumerate(urls_batch[:10]):
+                # Process each URL in separate tab (configurable limit)
+                max_tabs = getattr(self.settings, 'MAX_TABS_PER_BROWSER', 10)
+                for i, url in enumerate(urls_batch[:max_tabs]):
                     try:
                         page = browser.new_page()
 

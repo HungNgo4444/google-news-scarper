@@ -141,11 +141,11 @@ async def create_job(
             metadata=job_request.metadata
         )
 
-        # Trigger background task
-        task_result = trigger_category_crawl_task.delay(
+        # Trigger background task directly (avoid creating duplicate jobs)
+        from src.core.scheduler.tasks import crawl_category_task
+        task_result = crawl_category_task.delay(
             category_id=str(job_request.category_id),
-            priority=job_request.priority,
-            metadata=job_request.metadata
+            job_id=str(job.id)
         )
 
         # Update job with Celery task ID
@@ -762,9 +762,8 @@ async def execute_job_immediately(
 ) -> JobResponse:
     """Execute existing job immediately (Run Now functionality).
 
-    This endpoint creates a new high-priority job based on an existing job
-    configuration and triggers immediate execution. This is the critical
-    fix for the "Run Now" button functionality.
+    This endpoint executes an existing job immediately by updating its priority
+    and triggering immediate execution. This prevents duplicate job creation.
 
     Args:
         job_id: UUID of the job to execute immediately
@@ -773,7 +772,7 @@ async def execute_job_immediately(
         category_repo: Category repository dependency
 
     Returns:
-        New job data with high priority and immediate execution
+        Updated job data with immediate execution status
 
     Raises:
         HTTPException: If job not found or execution fails
@@ -783,15 +782,15 @@ async def execute_job_immediately(
     logger.info(
         "Executing job immediately (Run Now)",
         correlation_id=correlation_id,
-        source_job_id=str(job_id)
+        job_id=str(job_id)
     )
 
     try:
-        # Get the source job
-        source_job = await job_repo.get_by_id(job_id)
-        if not source_job:
+        # Get the existing job
+        job = await job_repo.get_by_id(job_id)
+        if not job:
             logger.warning(
-                "Source job not found for immediate execution",
+                "Job not found for immediate execution",
                 correlation_id=correlation_id,
                 job_id=str(job_id)
             )
@@ -800,64 +799,118 @@ async def execute_job_immediately(
                 detail=f"Job with ID {job_id} not found"
             )
 
+        # Check if job is already running or completed
+        if job.status == CrawlJobStatus.RUNNING:
+            logger.warning(
+                "Job is already running",
+                correlation_id=correlation_id,
+                job_id=str(job_id)
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Job is already running"
+            )
+
+        if job.status == CrawlJobStatus.COMPLETED:
+            logger.warning(
+                "Job is already completed",
+                correlation_id=correlation_id,
+                job_id=str(job_id)
+            )
+            raise HTTPException(
+                status_code=400,
+                detail="Job is already completed. Create a new job if you want to run again."
+            )
+
         # Verify category exists and is active
-        category = await category_repo.get_by_id(source_job.category_id)
+        category = await category_repo.get_by_id(job.category_id)
         if not category:
             logger.warning(
                 "Category not found for immediate execution",
                 correlation_id=correlation_id,
-                category_id=str(source_job.category_id)
+                category_id=str(job.category_id)
             )
             raise HTTPException(
                 status_code=404,
-                detail=f"Category with ID {source_job.category_id} not found"
+                detail=f"Category with ID {job.category_id} not found"
             )
 
         if not category.is_active:
             logger.warning(
                 "Attempted immediate execution for inactive category",
                 correlation_id=correlation_id,
-                category_id=str(source_job.category_id)
+                category_id=str(job.category_id)
             )
             raise HTTPException(
                 status_code=400,
                 detail=f"Category '{category.name}' is not active"
             )
 
-        # Create new job with high priority for immediate execution
-        new_job = await job_repo.create_job(
-            category_id=source_job.category_id,
-            priority=10,  # Maximum priority for immediate execution
-            correlation_id=correlation_id,
-            metadata={"source_job_id": str(job_id), "execution_type": "immediate"}
-        )
+        # For failed jobs, reset to pending status and trigger new task
+        if job.status == CrawlJobStatus.FAILED:
+            # Reset job status and create new task
+            await job_repo.update_status(
+                job_id=job.id,
+                status=CrawlJobStatus.PENDING,
+                error_message=None,
+                correlation_id=correlation_id,
+                priority=10  # High priority for immediate execution
+            )
 
-        # Trigger background task with high priority
-        task_result = trigger_category_crawl_task.delay(
-            category_id=str(source_job.category_id),
-            priority=10,
-            metadata={"source_job_id": str(job_id), "execution_type": "immediate"}
-        )
+            # Trigger new background task directly
+            from src.core.scheduler.tasks import crawl_category_task
+            task_result = crawl_category_task.delay(
+                category_id=str(job.category_id),
+                job_id=str(job.id)
+            )
 
-        # Update job with Celery task ID
-        await job_repo.update_status(
-            job_id=new_job.id,
-            status=CrawlJobStatus.PENDING,
-            celery_task_id=task_result.id,
-            correlation_id=correlation_id
-        )
+            # Update job with new Celery task ID
+            await job_repo.update_status(
+                job_id=job.id,
+                status=CrawlJobStatus.PENDING,
+                celery_task_id=task_result.id,
+                correlation_id=correlation_id
+            )
 
-        logger.info(
-            "Job scheduled for immediate execution",
-            correlation_id=correlation_id,
-            source_job_id=str(job_id),
-            new_job_id=str(new_job.id),
-            category_id=str(source_job.category_id),
-            celery_task_id=task_result.id
-        )
+            logger.info(
+                "Failed job reset and scheduled for immediate execution",
+                correlation_id=correlation_id,
+                job_id=str(job_id),
+                celery_task_id=task_result.id
+            )
+
+        elif job.status == CrawlJobStatus.PENDING:
+            # For pending jobs, just update priority and trigger execution
+            await job_repo.update_job_priority(
+                job_id=job.id,
+                priority=10,
+                correlation_id=correlation_id
+            )
+
+            # Trigger immediate execution of existing job
+            from src.core.scheduler.tasks import crawl_category_task
+            task_result = crawl_category_task.delay(
+                category_id=str(job.category_id),
+                job_id=str(job.id)
+            )
+
+            # Update job with new Celery task ID
+            await job_repo.update_status(
+                job_id=job.id,
+                status=CrawlJobStatus.PENDING,
+                celery_task_id=task_result.id,
+                correlation_id=correlation_id
+            )
+
+            logger.info(
+                "Pending job triggered for immediate execution",
+                correlation_id=correlation_id,
+                job_id=str(job_id),
+                celery_task_id=task_result.id
+            )
 
         # Refresh job data
-        updated_job = await job_repo.get_by_id(new_job.id)
+        updated_job = await job_repo.get_by_id(job.id)
 
         # Create response with raw data (bypass Pydantic validation issues)
         response_data = {
@@ -887,7 +940,7 @@ async def execute_job_immediately(
         logger.error(
             "Failed to execute job immediately",
             correlation_id=correlation_id,
-            source_job_id=str(job_id),
+            job_id=str(job_id),
             error=str(e),
             error_type=type(e).__name__
         )

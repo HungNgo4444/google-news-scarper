@@ -112,8 +112,8 @@ class SyncCrawlerEngine:
         if not google_news_urls:
             return []
 
-        # CRITICAL FIX: Process in batches with 1 browser + 10 tabs like financial_news_extractor.py
-        MAX_URLS_TO_PROCESS = getattr(self.settings, 'MAX_URLS_TO_PROCESS', 15)
+        # CRITICAL FIX: Process in batches with 1 browser + configurable tabs
+        MAX_URLS_TO_PROCESS = self.settings.MAX_URLS_TO_PROCESS
 
         # Limit the number of URLs to process
         urls_to_process = google_news_urls[:MAX_URLS_TO_PROCESS]
@@ -127,8 +127,8 @@ class SyncCrawlerEngine:
             return []
 
         try:
-            # Process URLs in batches of 10 (max tabs per browser)
-            batch_size = 10
+            # Process URLs in batches (configurable max tabs per browser)
+            batch_size = self.settings.MAX_TABS_PER_BROWSER
             for i in range(0, len(urls_to_process), batch_size):
                 batch = urls_to_process[i:i+batch_size]
                 self.logger.info(f"Processing batch {i//batch_size + 1}: {len(batch)} URLs with single browser")
@@ -880,14 +880,18 @@ class SyncCrawlerEngine:
 
         try:
             # Build search query with OR logic for keywords
-            search_query = " OR ".join(f'"{keyword}"' for keyword in keywords)
+            search_query = " OR ".join(keywords)
 
             # Add exclusions if provided
             if exclude_keywords:
-                exclusions = " ".join(f'-"{keyword}"' for keyword in exclude_keywords)
+                exclusions = " ".join(f'-{keyword}' for keyword in exclude_keywords)
                 search_query = f"{search_query} {exclusions}"
 
             self.logger.info(f"Searching Google News with query: {search_query}")
+
+            # URL encode the search query to handle spaces and special characters
+            from urllib.parse import quote_plus
+            encoded_query = quote_plus(search_query)
 
             # Use GNews with enhanced URL resolution strategy
             import gnews
@@ -898,8 +902,8 @@ class SyncCrawlerEngine:
                 max_results=max_results
             )
 
-            # Search using GNews directly
-            search_results = gn.get_news(search_query)
+            # Search using GNews directly with encoded query
+            search_results = gn.get_news(encoded_query)
 
             if not search_results:
                 self.logger.warning(f"No results found for query: {search_query}")
@@ -1124,8 +1128,23 @@ class SyncCrawlerEngine:
             # Create Article objects for URLs
             articles = [Article(url) for url in urls]
 
-            # Use newspaper4k threading to download and parse
-            processed_articles = fetch_news(articles, threads=threads)
+            # Use newspaper4k threading to download and parse with error handling
+            try:
+                processed_articles = fetch_news(articles, threads=threads)
+            except Exception as fetch_error:
+                # If fetch_news fails completely, try individual processing
+                self.logger.warning(f"Batch fetch failed ({fetch_error}), falling back to individual processing")
+                processed_articles = []
+
+                # Process articles individually to isolate failures
+                for article in articles:
+                    try:
+                        article.download()
+                        article.parse()
+                        processed_articles.append(article)
+                    except Exception as individual_error:
+                        self.logger.warning(f"Failed to process individual article {article.url}: {individual_error}")
+                        continue
 
             # Convert to our format
             extracted_data = []
@@ -1166,9 +1185,16 @@ class SyncCrawlerEngine:
             return extracted_data
 
         except Exception as e:
-            error_msg = f"Failed to extract articles: {str(e)}"
-            self.logger.error(error_msg)
-            raise ExtractionError(error_msg) from e
+            # Only fail the job if there's a critical system error, not individual article failures
+            if "No articles could be processed" in str(e) and len(urls) > 10:
+                # Only fail if we have many URLs but couldn't process any
+                error_msg = f"Critical extraction failure: {str(e)}"
+                self.logger.error(error_msg)
+                raise ExtractionError(error_msg) from e
+            else:
+                # Log the error but return empty results instead of failing the job
+                self.logger.warning(f"Extraction encountered errors but continuing: {str(e)}")
+                return []
 
     def crawl_category_sync(self, category: Any, job_id: str = None) -> List[Dict[str, Any]]:
         """Crawl articles for a category using sync operations.

@@ -140,9 +140,58 @@ class TestConfigurationValidation:
         ("REDIS_MAX_MEMORY", str),
         ("DEV_RELOAD", bool),
         ("BACKUP_ENABLED", bool),
+        # Story 2.5 - URL Processing Limits
+        ("MAX_URLS_TO_PROCESS", int),
+        ("MAX_RESULTS_PER_SEARCH", int),
+        ("MAX_TABS_PER_BROWSER", int),
     ])
     def test_field_types(self, env_name, expected_type):
         """Test that environment variable fields have correct types."""
         settings = get_settings()
         value = getattr(settings, env_name)
         assert isinstance(value, expected_type), f"{env_name} should be {expected_type}, got {type(value)}"
+
+    def test_url_processing_limits_configuration(self):
+        """Test URL processing limits configuration (Story 2.5)."""
+        settings = get_settings()
+
+        # Test default values
+        assert settings.MAX_URLS_TO_PROCESS == 100, "MAX_URLS_TO_PROCESS should default to 100"
+        assert settings.MAX_RESULTS_PER_SEARCH == 200, "MAX_RESULTS_PER_SEARCH should default to 200"
+        assert settings.MAX_TABS_PER_BROWSER == 20, "MAX_TABS_PER_BROWSER should default to 20"
+
+    def test_url_processing_limits_validation(self):
+        """Test validation of URL processing limits (Story 2.5)."""
+        # Test MAX_URLS_TO_PROCESS validation
+        with pytest.raises(ValueError, match="MAX_URLS_TO_PROCESS must be positive"):
+            Settings(MAX_URLS_TO_PROCESS=0)
+
+        with pytest.raises(ValueError, match="MAX_URLS_TO_PROCESS must not exceed 500"):
+            Settings(MAX_URLS_TO_PROCESS=600)
+
+        # Test MAX_RESULTS_PER_SEARCH validation
+        with pytest.raises(ValueError, match="MAX_RESULTS_PER_SEARCH must be positive"):
+            Settings(MAX_RESULTS_PER_SEARCH=-1)
+
+        with pytest.raises(ValueError, match="MAX_RESULTS_PER_SEARCH must not exceed 1000"):
+            Settings(MAX_RESULTS_PER_SEARCH=1500)
+
+        # Test MAX_TABS_PER_BROWSER validation
+        with pytest.raises(ValueError, match="MAX_TABS_PER_BROWSER must be positive"):
+            Settings(MAX_TABS_PER_BROWSER=0)
+
+        with pytest.raises(ValueError, match="MAX_TABS_PER_BROWSER must not exceed 50"):
+            Settings(MAX_TABS_PER_BROWSER=100)
+
+    def test_url_processing_limits_within_valid_range(self):
+        """Test that URL processing limits accept valid values (Story 2.5)."""
+        # Test valid values - should not raise exceptions
+        settings = Settings(
+            MAX_URLS_TO_PROCESS=150,
+            MAX_RESULTS_PER_SEARCH=300,
+            MAX_TABS_PER_BROWSER=25
+        )
+
+        assert settings.MAX_URLS_TO_PROCESS == 150
+        assert settings.MAX_RESULTS_PER_SEARCH == 300
+        assert settings.MAX_TABS_PER_BROWSER == 25

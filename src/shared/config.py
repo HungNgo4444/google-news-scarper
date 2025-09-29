@@ -264,6 +264,25 @@ class Settings(BaseSettings):
         description="Batch size for article extraction",
         env="ARTICLE_EXTRACTION_BATCH_SIZE"
     )
+
+    # URL Processing Limits (Story 2.5 - Worker Queue and URL Limits Fix)
+    MAX_URLS_TO_PROCESS: int = Field(
+        default=100,
+        description="Maximum number of URLs to process per job (increased from 15)",
+        env="MAX_URLS_TO_PROCESS"
+    )
+
+    MAX_RESULTS_PER_SEARCH: int = Field(
+        default=200,
+        description="Maximum results per search query (increased from 100)",
+        env="MAX_RESULTS_PER_SEARCH"
+    )
+
+    MAX_TABS_PER_BROWSER: int = Field(
+        default=20,
+        description="Maximum tabs per browser instance (increased from 10)",
+        env="MAX_TABS_PER_BROWSER"
+    )
     
     @field_validator("DATABASE_URL")
     @classmethod
@@ -938,6 +957,33 @@ class Settings(BaseSettings):
     def validate_api_port(cls, v: int) -> int:
         if v <= 0 or v > 65535:
             raise ValueError("API_PORT must be between 1 and 65535")
+        return v
+
+    @field_validator("MAX_URLS_TO_PROCESS")
+    @classmethod
+    def validate_max_urls_to_process(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("MAX_URLS_TO_PROCESS must be positive")
+        if v > 500:
+            raise ValueError("MAX_URLS_TO_PROCESS must not exceed 500 (performance limit)")
+        return v
+
+    @field_validator("MAX_RESULTS_PER_SEARCH")
+    @classmethod
+    def validate_max_results_per_search(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("MAX_RESULTS_PER_SEARCH must be positive")
+        if v > 1000:
+            raise ValueError("MAX_RESULTS_PER_SEARCH must not exceed 1000 (performance limit)")
+        return v
+
+    @field_validator("MAX_TABS_PER_BROWSER")
+    @classmethod
+    def validate_max_tabs_per_browser(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("MAX_TABS_PER_BROWSER must be positive")
+        if v > 50:
+            raise ValueError("MAX_TABS_PER_BROWSER must not exceed 50 (memory limit)")
         return v
 
     model_config = ConfigDict(
