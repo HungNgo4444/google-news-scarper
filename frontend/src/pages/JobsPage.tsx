@@ -4,7 +4,11 @@ import { JobStatus } from '../components/features/jobs/JobStatus';
 import { JobsList } from '../components/features/jobs/JobsList';
 import type { JobResponse } from '../types/shared';
 
-export function JobsPage() {
+interface JobsPageProps {
+  onNavigateToArticles?: (jobId: string) => void;
+}
+
+export function JobsPage({ onNavigateToArticles }: JobsPageProps) {
   const [currentJob, setCurrentJob] = useState<JobResponse | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -56,7 +60,7 @@ export function JobsPage() {
           )}
 
           {/* Job History */}
-          <JobsList refreshTrigger={refreshTrigger} />
+          <JobsList refreshTrigger={refreshTrigger} onNavigateToArticles={onNavigateToArticles} />
         </div>
       </div>
     </div>

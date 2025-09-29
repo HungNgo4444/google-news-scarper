@@ -25,3 +25,4 @@ Pillow>=8.4.0
 aiohttp>=3.8.0
 cloudscraper==1.2.71
 nest_asyncio>=1.5.0
+openpyxl>=3.1.0

@@ -75,7 +75,7 @@ class Article(BaseModel):
     keywords_matched: Mapped[Optional[List[str]]] = mapped_column(
         ARRAY(String),
         nullable=True,
-        default=list
+        default=lambda: []
     )
 
     relevance_score: Mapped[float] = mapped_column(

@@ -3,7 +3,6 @@ import { JobsService } from '../../../services/jobsService';
 import { CategoriesService } from '../../../services/categoriesService';
 import type { JobResponse, Category } from '../../../types/shared';
 import JobActionButtons from './JobActionButtons';
-import JobArticlesModal from './JobArticlesModal';
 import JobEditModal from './JobEditModal';
 
 const STATUS_COLORS = {
@@ -22,17 +21,16 @@ const STATUS_ICONS = {
 
 interface JobsListProps {
   refreshTrigger?: number;
+  onNavigateToArticles?: (jobId: string) => void;
 }
 
-export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
+export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListProps) {
   const [jobs, setJobs] = useState<JobResponse[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Modal states
-  const [selectedJobForArticles, setSelectedJobForArticles] = useState<JobResponse | null>(null);
-  const [isArticlesModalOpen, setIsArticlesModalOpen] = useState(false);
   const [selectedJobForEdit, setSelectedJobForEdit] = useState<JobResponse | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
@@ -98,10 +96,8 @@ export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
   };
 
   const handleViewArticles = (jobId: string) => {
-    const job = jobs.find(j => j.id === jobId);
-    if (job) {
-      setSelectedJobForArticles(job);
-      setIsArticlesModalOpen(true);
+    if (onNavigateToArticles) {
+      onNavigateToArticles(jobId);
     }
   };
 
@@ -292,16 +288,6 @@ export function JobsList({ refreshTrigger = 0 }: JobsListProps) {
 
         </>
       )}
-
-      {/* Articles Modal */}
-      <JobArticlesModal
-        job={selectedJobForArticles}
-        isOpen={isArticlesModalOpen}
-        onClose={() => {
-          setIsArticlesModalOpen(false);
-          setSelectedJobForArticles(null);
-        }}
-      />
 
       {/* Edit Job Modal */}
       <JobEditModal

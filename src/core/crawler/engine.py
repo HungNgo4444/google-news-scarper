@@ -27,6 +27,7 @@ Example:
     from src.shared.config import get_settings
     from src.core.crawler.engine import CrawlerEngine
     from src.core.crawler.extractor import ArticleExtractor
+from src.core.crawler.keyword_matcher import enhance_articles_with_matched_keywords
     from src.database.repositories.article_repo import ArticleRepository
     from src.database.repositories.category_repo import CategoryRepository
     
@@ -93,6 +94,7 @@ from src.shared.exceptions import (
     ExternalServiceError
 )
 from src.core.crawler.extractor import ArticleExtractor
+from src.core.crawler.keyword_matcher import enhance_articles_with_matched_keywords
 from src.core.error_handling.circuit_breaker import (
     CircuitBreakerManager, 
     CircuitBreakerConfig, 
@@ -254,6 +256,9 @@ class CrawlerEngine:
         )
         
         try:
+            # Store category keywords for use in save methods
+            self._current_category_keywords = category.keywords or []
+
             # Step 1: Search Google News for article URLs with enhanced parameters
             max_results = getattr(self.settings, 'MAX_RESULTS_PER_SEARCH', 100)
             article_urls = await self.search_google_news(
@@ -1302,7 +1307,22 @@ class CrawlerEngine:
         duplicate_count = 0
         error_count = 0
         
-        for article_data in articles:
+        # First, enhance articles with matched keywords from category
+        if hasattr(self, '_current_category_keywords'):
+            enhanced_articles = enhance_articles_with_matched_keywords(
+                articles, self._current_category_keywords
+            )
+            self.logger.info(
+                f"Enhanced {len(articles)} articles with keyword matching",
+                extra={
+                    "correlation_id": correlation_id,
+                    "category_keywords": self._current_category_keywords
+                }
+            )
+        else:
+            enhanced_articles = articles
+
+        for article_data in enhanced_articles:
             try:
                 # Check for existing article by URL hash
                 url_hash = article_data.get('url_hash')

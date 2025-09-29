@@ -1,11 +1,23 @@
 import { useState } from 'react'
 import { CategoriesPage } from './pages/CategoriesPage'
 import { JobsPage } from './pages/JobsPage'
+import { ArticlesPage } from './pages/ArticlesPage'
 
-type Page = 'home' | 'categories' | 'jobs'
+type Page = 'home' | 'categories' | 'jobs' | 'articles'
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('home')
+  const [currentJobId, setCurrentJobId] = useState<string>('')
+
+  const navigateToArticles = (jobId: string) => {
+    setCurrentJobId(jobId)
+    setCurrentPage('articles')
+  }
+
+  const navigateToJobs = () => {
+    setCurrentPage('jobs')
+    setCurrentJobId('')
+  }
 
 
   return (
@@ -98,7 +110,8 @@ function App() {
       )}
 
       {currentPage === 'categories' && <CategoriesPage />}
-      {currentPage === 'jobs' && <JobsPage />}
+      {currentPage === 'jobs' && <JobsPage onNavigateToArticles={navigateToArticles} />}
+      {currentPage === 'articles' && <ArticlesPage jobId={currentJobId} onNavigateBack={navigateToJobs} />}
     </div>
   )
 }
