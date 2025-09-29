@@ -647,6 +647,8 @@ def cleanup_old_jobs_task(self) -> Dict[str, Any]:
     Returns:
         Cleanup results and statistics
     """
+    from src.shared.async_utils import safe_async_run
+
     correlation_id = f"cleanup_{self.request.id}"
     settings = get_settings()
 
@@ -655,22 +657,38 @@ def cleanup_old_jobs_task(self) -> Dict[str, Any]:
         "task_id": self.request.id
     })
 
-    # Use asyncio.run() with proper error handling for Celery workers
-    import asyncio
-
+    # Use safe async execution to handle event loop conflicts
     try:
-        return asyncio.run(_async_cleanup_old_jobs_task(self, correlation_id, settings))
-    except RuntimeError as e:
-        logger.warning(f"Event loop conflict in cleanup task: {e}", extra={
-            "correlation_id": correlation_id,
-            "task_id": self.request.id
-        })
-        # Explicit failure instead of silent success
-        raise CeleryTaskFailedError(
-            task_name="cleanup_old_jobs_task",
-            message=f"Event loop conflict: {str(e)}",
-            details={"error_type": "event_loop_conflict"}
+        coro = _async_cleanup_old_jobs_task(self, correlation_id, settings)
+        # Add correlation ID for tracking (using setattr for safety)
+        try:
+            setattr(coro, '__correlation_id__', correlation_id)
+        except AttributeError:
+            # Fallback if coroutine doesn't support attribute setting
+            pass
+
+        return safe_async_run(
+            coro,
+            timeout=300,  # 5 minute timeout
+            fallback_result={
+                "status": "failed",
+                "error": "Cleanup task execution failed",
+                "correlation_id": correlation_id
+            }
         )
+    except Exception as e:
+        logger.error(f"Job cleanup execution failed: {e}", extra={
+            "correlation_id": correlation_id,
+            "task_id": self.request.id,
+            "error_type": type(e).__name__
+        })
+
+        # Return failure result instead of raising
+        return {
+            "status": "failed",
+            "error": f"Cleanup execution failed: {str(e)}",
+            "correlation_id": correlation_id
+        }
 
 
 async def _async_cleanup_old_jobs_task(
@@ -778,6 +796,8 @@ def monitor_job_health_task(self) -> Dict[str, Any]:
     Returns:
         Health monitoring results
     """
+    from src.shared.async_utils import safe_async_run
+
     correlation_id = f"health_{self.request.id}"
 
     logger.info("Starting job health monitoring", extra={
@@ -785,22 +805,38 @@ def monitor_job_health_task(self) -> Dict[str, Any]:
         "task_id": self.request.id
     })
 
-    # Use asyncio.run() with proper error handling for Celery workers
-    import asyncio
-
+    # Use safe async execution to handle event loop conflicts
     try:
-        return asyncio.run(_async_monitor_job_health_task(self, correlation_id))
-    except RuntimeError as e:
-        logger.warning(f"Event loop conflict in health monitoring: {e}", extra={
-            "correlation_id": correlation_id,
-            "task_id": self.request.id
-        })
-        # Explicit failure instead of silent success
-        raise CeleryTaskFailedError(
-            task_name="monitor_job_health_task",
-            message=f"Event loop conflict: {str(e)}",
-            details={"error_type": "event_loop_conflict"}
+        coro = _async_monitor_job_health_task(self, correlation_id)
+        # Add correlation ID for tracking (using setattr for safety)
+        try:
+            setattr(coro, '__correlation_id__', correlation_id)
+        except AttributeError:
+            # Fallback if coroutine doesn't support attribute setting
+            pass
+
+        return safe_async_run(
+            coro,
+            timeout=180,  # 3 minute timeout
+            fallback_result={
+                "status": "failed",
+                "error": "Health monitoring task execution failed",
+                "correlation_id": correlation_id
+            }
         )
+    except Exception as e:
+        logger.error(f"Job health monitoring execution failed: {e}", extra={
+            "correlation_id": correlation_id,
+            "task_id": self.request.id,
+            "error_type": type(e).__name__
+        })
+
+        # Return failure result instead of raising
+        return {
+            "status": "failed",
+            "error": f"Health monitoring execution failed: {str(e)}",
+            "correlation_id": correlation_id
+        }
 
 
 async def _async_monitor_job_health_task(
