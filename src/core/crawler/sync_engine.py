@@ -909,6 +909,10 @@ class SyncCrawlerEngine:
                 self.logger.warning(f"No results found for query: {search_query}")
                 return []
 
+            # URL Statistics: Print how many URLs were found from Google News search
+            self.logger.info(f"📊 GOOGLE NEWS SEARCH STATISTICS: Found {len(search_results)} URLs from search query")
+            print(f"🔍 Google News Search Results: {len(search_results)} URLs found for query: '{search_query}'")  # For console visibility
+
             # Log some sample results for debugging
             if search_results:
                 sample = search_results[0]

@@ -25,6 +25,14 @@ logging.getLogger("celery.app.trace").setLevel(logging.WARNING)
 logging.getLogger("billiard").setLevel(logging.WARNING)
 logging.getLogger("kombu").setLevel(logging.WARNING)
 
+# Fix newspaper4k DEBUG spam (newspaper4k sets DEBUG level in utils/__init__.py)
+logging.getLogger("newspaper").setLevel(logging.WARNING)
+logging.getLogger("newspaper.utils").setLevel(logging.WARNING)
+
+# Additional MainProcess debug suppressors
+logging.getLogger("celery.worker.strategy").setLevel(logging.WARNING)
+logging.getLogger("celery.worker.consumer").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 settings = get_settings()
