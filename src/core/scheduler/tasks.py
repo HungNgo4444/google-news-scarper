@@ -59,7 +59,7 @@ logger = get_task_logger(__name__)
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=300)
-def crawl_category_task(self, category_id: str, job_id: str) -> Dict[str, Any]:
+def crawl_category_task(self, category_id: str, job_id: str, start_date: Optional[str] = None, end_date: Optional[str] = None, max_results: Optional[int] = None) -> Dict[str, Any]:
     """Execute crawl for specific category with comprehensive error handling.
 
     This is the main background task for crawling articles from a category.
@@ -68,6 +68,9 @@ def crawl_category_task(self, category_id: str, job_id: str) -> Dict[str, Any]:
     Args:
         category_id: UUID string of the category to crawl
         job_id: UUID string of the CrawlJob tracking this execution
+        start_date: Optional start date for filtering (ISO format string)
+        end_date: Optional end date for filtering (ISO format string)
+        max_results: Optional maximum number of articles to crawl (uses settings default if None)
 
     Returns:
         Dictionary containing execution results and metrics
@@ -89,7 +92,7 @@ def crawl_category_task(self, category_id: str, job_id: str) -> Dict[str, Any]:
 
     # Use sync operations - no more async/await conflicts!
     return _sync_crawl_category_task(
-        self, category_id, job_id, correlation_id, settings
+        self, category_id, job_id, correlation_id, settings, start_date, end_date, max_results
     )
 
 
@@ -98,7 +101,10 @@ def _sync_crawl_category_task(
     category_id: str,
     job_id: str,
     correlation_id: str,
-    settings
+    settings,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    max_results: Optional[int] = None
 ) -> Dict[str, Any]:
     """Sync implementation of the category crawl task.
 
@@ -111,6 +117,9 @@ def _sync_crawl_category_task(
         job_id: Job UUID string
         correlation_id: Unique correlation ID for tracking
         settings: Application settings
+        start_date: Optional start date for filtering (ISO format string)
+        end_date: Optional end date for filtering (ISO format string)
+        max_results: Optional maximum number of articles to crawl
 
     Returns:
         Task execution results
@@ -167,8 +176,28 @@ def _sync_crawl_category_task(
             logger=logger
         )
 
-        # Execute crawl using sync operations
-        crawl_result = sync_crawler.crawl_category_sync(category, job_id)
+        # Parse date strings to datetime objects if provided
+        start_date_obj = None
+        end_date_obj = None
+
+        if start_date:
+            try:
+                start_date_obj = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                logger.info(f"Parsed start_date: {start_date_obj}")
+            except ValueError as e:
+                logger.warning(f"Invalid start_date format '{start_date}': {e}")
+
+        if end_date:
+            try:
+                end_date_obj = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                logger.info(f"Parsed end_date: {end_date_obj}")
+            except ValueError as e:
+                logger.warning(f"Invalid end_date format '{end_date}': {e}")
+
+        # Execute crawl using sync operations with date filtering and max results
+        crawl_result = sync_crawler.crawl_category_sync(
+            category, job_id, start_date_obj, end_date_obj, max_results
+        )
 
         # Handle both old list format and new dict format for backward compatibility
         if isinstance(crawl_result, dict):
@@ -1075,7 +1104,10 @@ def _sync_trigger_category_crawl_task(
         # Schedule the actual crawl task
         crawl_result = crawl_category_task.delay(
             category_id=category_id,
-            job_id=str(job.id)
+            job_id=str(job.id),
+            start_date=None,
+            end_date=None,
+            max_results=None
         )
 
         result = {

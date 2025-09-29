@@ -143,9 +143,16 @@ async def create_job(
 
         # Trigger background task directly (avoid creating duplicate jobs)
         from src.core.scheduler.tasks import crawl_category_task
+        # Convert datetime objects to ISO strings for Celery
+        start_date_str = job_request.start_date.isoformat() if job_request.start_date else None
+        end_date_str = job_request.end_date.isoformat() if job_request.end_date else None
+
         task_result = crawl_category_task.delay(
             category_id=str(job_request.category_id),
-            job_id=str(job.id)
+            job_id=str(job.id),
+            start_date=start_date_str,
+            end_date=end_date_str,
+            max_results=job_request.max_results
         )
 
         # Update job with Celery task ID
@@ -861,7 +868,10 @@ async def execute_job_immediately(
             from src.core.scheduler.tasks import crawl_category_task
             task_result = crawl_category_task.delay(
                 category_id=str(job.category_id),
-                job_id=str(job.id)
+                job_id=str(job.id),
+                start_date=None,
+                end_date=None,
+                max_results=None
             )
 
             # Update job with new Celery task ID
@@ -891,7 +901,10 @@ async def execute_job_immediately(
             from src.core.scheduler.tasks import crawl_category_task
             task_result = crawl_category_task.delay(
                 category_id=str(job.category_id),
-                job_id=str(job.id)
+                job_id=str(job.id),
+                start_date=None,
+                end_date=None,
+                max_results=None
             )
 
             # Update job with new Celery task ID

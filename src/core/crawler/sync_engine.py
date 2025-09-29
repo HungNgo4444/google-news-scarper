@@ -858,7 +858,9 @@ class SyncCrawlerEngine:
         exclude_keywords: List[str] = None,
         max_results: int = 100,
         language: str = "en",
-        country: str = "US"
+        country: str = "US",
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> List[str]:
         """Search Google News using sync operations.
 
@@ -868,6 +870,8 @@ class SyncCrawlerEngine:
             max_results: Maximum number of results to return
             language: Language code for search results
             country: Country code for search results
+            start_date: Optional start date for filtering (datetime object)
+            end_date: Optional end date for filtering (datetime object)
 
         Returns:
             List of resolved article URLs (not Google News URLs)
@@ -902,6 +906,14 @@ class SyncCrawlerEngine:
                 max_results=max_results
             )
 
+            # Apply date filtering if provided
+            if start_date:
+                gn.start_date = start_date
+                self.logger.info(f"Applied start_date filter: {start_date}")
+            if end_date:
+                gn.end_date = end_date
+                self.logger.info(f"Applied end_date filter: {end_date}")
+
             # Search using GNews directly with encoded query
             search_results = gn.get_news(encoded_query)
 
@@ -910,8 +922,8 @@ class SyncCrawlerEngine:
                 return []
 
             # URL Statistics: Print how many URLs were found from Google News search
-            self.logger.info(f"📊 GOOGLE NEWS SEARCH STATISTICS: Found {len(search_results)} URLs from search query")
-            print(f"🔍 Google News Search Results: {len(search_results)} URLs found for query: '{search_query}'")  # For console visibility
+            self.logger.info(f"GOOGLE NEWS SEARCH STATISTICS: Found {len(search_results)} URLs from search query")
+            print(f"Google News Search Results: {len(search_results)} URLs found for query: '{search_query}'")  # For console visibility
 
             # Log some sample results for debugging
             if search_results:
@@ -965,7 +977,9 @@ class SyncCrawlerEngine:
         exclude_keywords: List[str] = None,
         max_results: int = 100,
         language: str = "en",
-        country: str = "US"
+        country: str = "US",
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> List[str]:
         """Enhanced Google News search using CloudScraper for better reliability.
 
@@ -978,6 +992,8 @@ class SyncCrawlerEngine:
             max_results: Maximum number of results to return
             language: Language code for search results
             country: Country code for search results
+            start_date: Optional start date for filtering articles
+            end_date: Optional end date for filtering articles
 
         Returns:
             List of Google News URLs for further processing
@@ -987,7 +1003,7 @@ class SyncCrawlerEngine:
         """
         if not self.scraper:
             self.logger.warning("CloudScraper not available, falling back to standard search")
-            return self.search_google_news(keywords, exclude_keywords, max_results, language, country)
+            return self.search_google_news(keywords, exclude_keywords, max_results, language, country, start_date, end_date)
 
         if not keywords:
             raise GoogleNewsUnavailableError("Keywords list cannot be empty")
@@ -1007,6 +1023,19 @@ class SyncCrawlerEngine:
             import urllib.parse
             encoded_query = urllib.parse.quote(search_query)
             google_news_url = f"https://news.google.com/search?q={encoded_query}&hl={language}&gl={country}&ceid={country}:{language}"
+
+            # Add date filtering to URL if provided
+            if start_date:
+                # Convert datetime to format Google News expects (YYYY-MM-DD)
+                start_date_str = start_date.strftime('%Y-%m-%d')
+                google_news_url += f"&after={start_date_str}"
+                self.logger.info(f"Added start_date filter to CloudScraper URL: {start_date_str}")
+
+            if end_date:
+                # Convert datetime to format Google News expects (YYYY-MM-DD)
+                end_date_str = end_date.strftime('%Y-%m-%d')
+                google_news_url += f"&before={end_date_str}"
+                self.logger.info(f"Added end_date filter to CloudScraper URL: {end_date_str}")
 
             # Add CloudScraper delay
             delay = getattr(self.settings, 'CLOUDSCRAPER_DELAY', 1)
@@ -1051,7 +1080,7 @@ class SyncCrawlerEngine:
             self.logger.error(error_msg)
             # Fallback to standard search
             self.logger.info("Falling back to standard Google News search")
-            return self.search_google_news(keywords, exclude_keywords, max_results, language, country)
+            return self.search_google_news(keywords, exclude_keywords, max_results, language, country, start_date, end_date)
 
     def _parse_google_news_html(self, html_content: str, max_results: int = 100) -> List[str]:
         """Parse Google News HTML to extract article URLs.
@@ -1200,11 +1229,15 @@ class SyncCrawlerEngine:
                 self.logger.warning(f"Extraction encountered errors but continuing: {str(e)}")
                 return []
 
-    def crawl_category_sync(self, category: Any, job_id: str = None) -> List[Dict[str, Any]]:
+    def crawl_category_sync(self, category: Any, job_id: str = None, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
         """Crawl articles for a category using sync operations.
 
         Args:
             category: Category model instance with keywords
+            job_id: Optional job ID for tracking
+            start_date: Optional start date for filtering articles
+            end_date: Optional end date for filtering articles
+            max_results: Optional maximum number of articles to crawl (uses settings default if None)
 
         Returns:
             List of extracted article data
@@ -1216,7 +1249,13 @@ class SyncCrawlerEngine:
             self.logger.info(f"Starting sync crawl for category: {category.name}")
 
             # Step 1: Search Google News with category-specific language/country
-            max_results = getattr(self.settings, 'MAX_RESULTS_PER_SEARCH', 100)
+            # Use provided max_results or fallback to settings default
+            effective_max_results = max_results or getattr(self.settings, 'MAX_RESULTS_PER_SEARCH', 100)
+
+            if max_results:
+                self.logger.info(f"Using custom max_results: {max_results}")
+            else:
+                self.logger.info(f"Using default max_results from settings: {effective_max_results}")
 
             # Use category-specific language and country, fallback to defaults
             language = getattr(category, 'language', 'vi')
@@ -1228,9 +1267,11 @@ class SyncCrawlerEngine:
             article_urls = self.search_google_news(
                 keywords=category.keywords,
                 exclude_keywords=category.exclude_keywords or [],
-                max_results=max_results,
+                max_results=effective_max_results,
                 language=language,
-                country=country
+                country=country,
+                start_date=start_date,
+                end_date=end_date
             )
 
             if not article_urls:

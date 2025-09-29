@@ -404,7 +404,10 @@ class JobRecoveryEngine:
         # Schedule new crawl task
         result = crawl_category_task.delay(
             category_id=str(plan.analysis.category_id),
-            job_id=str(plan.analysis.job_id)
+            job_id=str(plan.analysis.job_id),
+            start_date=None,
+            end_date=None,
+            max_results=None
         )
         
         return {
@@ -418,7 +421,7 @@ class JobRecoveryEngine:
         """Schedule a delayed retry for a job."""
         # Schedule task with delay
         result = crawl_category_task.apply_async(
-            args=[str(plan.analysis.category_id), str(plan.analysis.job_id)],
+            args=[str(plan.analysis.category_id), str(plan.analysis.job_id), None, None, None],
             countdown=plan.delay_seconds
         )
         

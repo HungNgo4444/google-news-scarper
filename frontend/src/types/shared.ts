@@ -70,6 +70,9 @@ export interface CreateJobRequest {
   category_id: string;
   priority?: number;
   metadata?: object;
+  start_date?: string;
+  end_date?: string;
+  max_results?: number;
 }
 
 export interface JobListResponse {

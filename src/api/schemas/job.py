@@ -67,6 +67,26 @@ class CreateJobRequest(BaseModel):
         example={"source": "manual_trigger", "user": "admin"}
     )
 
+    start_date: Optional[datetime] = Field(
+        None,
+        description="Optional start date for filtering articles (ISO format)",
+        example="2024-01-01T00:00:00Z"
+    )
+
+    end_date: Optional[datetime] = Field(
+        None,
+        description="Optional end date for filtering articles (ISO format)",
+        example="2024-01-31T23:59:59Z"
+    )
+
+    max_results: Optional[int] = Field(
+        None,
+        ge=1,
+        le=500,
+        description="Maximum number of articles to crawl (1-500, default from settings)",
+        example=50
+    )
+
     @validator('metadata')
     def validate_metadata(cls, v):
         """Validate metadata dictionary."""
@@ -77,6 +97,14 @@ class CreateJobRequest(BaseModel):
         if len(str(v)) > 1000:
             raise ValueError('Metadata is too large (max 1000 characters)')
 
+        return v
+
+    @validator('end_date')
+    def validate_end_date(cls, v, values):
+        """Validate end_date is after start_date if both are provided."""
+        if v is not None and 'start_date' in values and values['start_date'] is not None:
+            if v <= values['start_date']:
+                raise ValueError('end_date must be after start_date')
         return v
 
 
