@@ -1,6 +1,8 @@
 # Claude Code directories
 .claude/
 .bmad-core/
+%APPDATA%/Claude/
+%LOCALAPPDATA%/Claude/
 
 # Python
 __pycache__/
