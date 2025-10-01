@@ -273,8 +273,8 @@ class Settings(BaseSettings):
     )
 
     MAX_RESULTS_PER_SEARCH: int = Field(
-        default=200,
-        description="Maximum results per search query (increased from 100)",
+        default=100,
+        description="Maximum results per search query (Google News limits date filtering to <=100 results)",
         env="MAX_RESULTS_PER_SEARCH"
     )
 
