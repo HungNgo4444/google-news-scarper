@@ -12,7 +12,16 @@ All schemas include proper validation and documentation for API endpoints.
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from uuid import UUID
+from decimal import Decimal
 from pydantic import BaseModel, Field, ConfigDict
+
+
+class ArticleCategoryInfo(BaseModel):
+    """Category information for an article."""
+
+    id: str = Field(..., description="Category ID")
+    name: str = Field(..., description="Category name")
+    relevance_score: float = Field(..., description="Relevance score for this category")
 
 
 class ArticleResponse(BaseModel):
@@ -35,6 +44,10 @@ class ArticleResponse(BaseModel):
     crawl_job_id: Optional[UUID] = Field(None, description="ID of the crawl job that found this article")
     keywords_matched: Optional[List[str]] = Field(default_factory=list, description="Keywords that matched for this article")
     relevance_score: float = Field(0.0, description="Relevance score (0.0-1.0)")
+
+    # Multi-category fields
+    categories: Optional[List[ArticleCategoryInfo]] = Field(None, description="Categories this article belongs to")
+    primary_category_id: Optional[str] = Field(None, description="Primary category ID (from crawl job)")
 
     # Base model fields
     created_at: datetime = Field(..., description="Article creation timestamp")

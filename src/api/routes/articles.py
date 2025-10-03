@@ -181,26 +181,54 @@ async def list_articles(
         )
 
         # Convert to response format
-        article_responses = [
-            ArticleResponse(
-                id=article.id,
-                title=article.title,
-                content=article.content,
-                author=article.author,
-                publish_date=article.publish_date,
-                source_url=article.source_url,
-                image_url=article.image_url,
-                url_hash=article.url_hash,
-                content_hash=article.content_hash,
-                last_seen=article.last_seen,
-                crawl_job_id=article.crawl_job_id,
-                keywords_matched=article.keywords_matched or [],
-                relevance_score=article.relevance_score,
-                created_at=article.created_at,
-                updated_at=article.updated_at
+        article_responses = []
+        for article in articles:
+            # Build categories list from ArticleCategory relationships
+            categories_info = []
+            primary_cat_id = None
+
+            # Get category_id from crawl_job if available
+            if article.crawl_job_id and job_id:
+                job = await job_repo.get_by_id(article.crawl_job_id)
+                if job:
+                    primary_cat_id = str(job.category_id) if job.category_id else None
+
+            # Process article categories
+            for article_cat in (article.categories or []):
+                # Load category details
+                cat = await category_repo.get_by_id(article_cat.category_id)
+                if cat:
+                    categories_info.append({
+                        'id': str(article_cat.category_id),
+                        'name': cat.name,
+                        'relevance_score': float(article_cat.relevance_score) if article_cat.relevance_score else 1.0
+                    })
+
+                    # Set primary category if not already set
+                    if not primary_cat_id:
+                        primary_cat_id = str(article_cat.category_id)
+
+            article_responses.append(
+                ArticleResponse(
+                    id=article.id,
+                    title=article.title,
+                    content=article.content,
+                    author=article.author,
+                    publish_date=article.publish_date,
+                    source_url=article.source_url,
+                    image_url=article.image_url,
+                    url_hash=article.url_hash,
+                    content_hash=article.content_hash,
+                    last_seen=article.last_seen,
+                    crawl_job_id=article.crawl_job_id,
+                    keywords_matched=article.keywords_matched or [],
+                    relevance_score=article.relevance_score,
+                    categories=categories_info if categories_info else None,
+                    primary_category_id=primary_cat_id,
+                    created_at=article.created_at,
+                    updated_at=article.updated_at
+                )
             )
-            for article in articles
-        ]
 
         # Calculate total pages
         total_pages = (total + size - 1) // size

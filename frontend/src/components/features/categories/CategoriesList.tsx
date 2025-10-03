@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Category } from '../../../types/shared';
 import { CategoriesService } from '../../../services/categoriesService';
+import { ScheduleStatusBadge } from './ScheduleStatusBadge';
 
 interface CategoriesListProps {
   onEdit: (category: Category) => void;
@@ -10,12 +11,36 @@ interface CategoriesListProps {
   refreshTrigger?: number;
 }
 
-export function CategoriesList({ 
-  onEdit, 
-  onDelete, 
-  onToggleStatus, 
-  onCreateNew, 
-  refreshTrigger = 0 
+function formatNextRunTime(nextRunAt: string): string {
+  const nextRun = new Date(nextRunAt);
+  const now = new Date();
+  const delta = nextRun.getTime() - now.getTime();
+
+  if (delta < 0) {
+    return 'Overdue';
+  }
+
+  const minutes = Math.floor(delta / 1000 / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (days > 0) {
+    return `in ${days} day${days !== 1 ? 's' : ''}`;
+  } else if (hours > 0) {
+    return `in ${hours} hour${hours !== 1 ? 's' : ''}`;
+  } else if (minutes > 0) {
+    return `in ${minutes} min${minutes !== 1 ? 's' : ''}`;
+  } else {
+    return 'in <1 min';
+  }
+}
+
+export function CategoriesList({
+  onEdit,
+  onDelete,
+  onToggleStatus,
+  onCreateNew,
+  refreshTrigger = 0
 }: CategoriesListProps) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
@@ -116,7 +141,13 @@ export function CategoriesList({
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
-                <th 
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Schedule
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Next Run
+                </th>
+                <th
                   className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer hover:bg-gray-100"
                   onClick={() => handleSort('created_at')}
                 >
@@ -177,13 +208,29 @@ export function CategoriesList({
                     <button
                       onClick={() => onToggleStatus(category)}
                       className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                        category.is_active 
-                          ? 'bg-green-100 text-green-800 hover:bg-green-200' 
+                        category.is_active
+                          ? 'bg-green-100 text-green-800 hover:bg-green-200'
                           : 'bg-gray-100 text-gray-800 hover:bg-gray-200'
                       }`}
                     >
                       {category.is_active ? 'Active' : 'Inactive'}
                     </button>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <ScheduleStatusBadge
+                      enabled={category.schedule_enabled || false}
+                      intervalMinutes={category.schedule_interval_minutes || null}
+                      crawlPeriod={category.crawl_period || null}
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+                    {category.schedule_enabled && category.next_scheduled_run_at ? (
+                      <span className="text-blue-600">
+                        {formatNextRunTime(category.next_scheduled_run_at)}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">-</span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {new Date(category.created_at).toLocaleDateString()}

@@ -111,6 +111,7 @@ celery_app.conf.update(
         "src.core.scheduler.tasks.trigger_category_crawl_task": {"queue": "default"},
         "src.core.scheduler.tasks.cleanup_old_jobs_task": {"queue": "maintenance_queue"},
         "src.core.scheduler.tasks.monitor_job_health_task": {"queue": "maintenance_queue"},
+        "src.core.scheduler.tasks.scan_scheduled_categories_task": {"queue": "maintenance_queue"},
     },
     
     # Default queue settings
@@ -173,6 +174,11 @@ celery_app.conf.beat_schedule = {
     "monitor-job-health": {
         "task": "src.core.scheduler.tasks.monitor_job_health_task",
         "schedule": 300.0,  # Run every 5 minutes
+        "options": {"queue": "maintenance_queue"},
+    },
+    "scan-scheduled-categories": {
+        "task": "src.core.scheduler.tasks.scan_scheduled_categories_task",
+        "schedule": 60.0,  # Run every 60 seconds (1 minute)
         "options": {"queue": "maintenance_queue"},
     },
 }

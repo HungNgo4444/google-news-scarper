@@ -41,7 +41,7 @@ from datetime import datetime
 from uuid import UUID
 from pydantic import BaseModel, Field, field_validator, validator
 
-from src.database.models.crawl_job import CrawlJobStatus
+from src.database.models.crawl_job import CrawlJobStatus, JobType
 
 
 class CreateJobRequest(BaseModel):
@@ -101,10 +101,35 @@ class CreateJobRequest(BaseModel):
 
     @validator('end_date')
     def validate_end_date(cls, v, values):
-        """Validate end_date is after start_date if both are provided."""
+        """Validate end_date is after start_date and date range doesn't exceed limits.
+
+        This validator prevents DoS attacks via excessive date ranges that would
+        trigger too many daily sliding window crawls.
+
+        Security Note (Story 2.3 - AC2):
+        - Daily sliding window crawls each day separately to avoid GNews chunking
+        - A 365-day range would create 365 separate GNews API calls
+        - This could cause crawler DoS, performance degradation, and rate limiting
+        - Therefore, we limit on-demand date ranges to a maximum of 90 days
+
+        Raises:
+            ValueError: If end_date <= start_date or date range exceeds 90 days
+        """
         if v is not None and 'start_date' in values and values['start_date'] is not None:
+            # Validate end_date is after start_date
             if v <= values['start_date']:
                 raise ValueError('end_date must be after start_date')
+
+            # DoS Prevention: Limit date range to 90 days for on-demand crawls
+            # (Story 2.3 Security Consideration - lines 199-211)
+            days_diff = (v - values['start_date']).days
+            if days_diff > 90:
+                raise ValueError(
+                    'Date range cannot exceed 90 days for on-demand crawls. '
+                    f'Requested range: {days_diff} days. '
+                    'This limit prevents excessive API calls and system resource exhaustion.'
+                )
+
         return v
 
 
@@ -240,6 +265,22 @@ class JobResponse(BaseModel):
         description="Job execution priority",
         example=5
     )
+
+    job_type: JobType = Field(
+        JobType.ON_DEMAND,
+        description="Job trigger type: SCHEDULED or ON_DEMAND",
+        example="ON_DEMAND"
+    )
+
+    @field_validator('job_type', mode='before')
+    @classmethod
+    def validate_job_type(cls, v):
+        """Convert string job_type to enum if needed, default to ON_DEMAND if None."""
+        if v is None:
+            return JobType.ON_DEMAND
+        if isinstance(v, str):
+            return JobType(v)
+        return v
 
     correlation_id: Optional[str] = Field(
         None,

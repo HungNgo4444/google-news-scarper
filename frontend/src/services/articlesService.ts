@@ -15,6 +15,12 @@ export interface ArticleResponse {
   crawl_job_id: string | null;
   keywords_matched: string[];
   relevance_score: number;
+  categories?: Array<{
+    id: string;
+    name: string;
+    relevance_score: number;
+  }>;
+  primary_category_id?: string;
   created_at: string;
   updated_at: string;
 }

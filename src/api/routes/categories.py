@@ -68,7 +68,10 @@ from src.api.schemas.category import (
     CategoryListResponse,
     CategoryWithStatsResponse,
     ErrorResponse,
-    ValidationErrorResponse
+    ValidationErrorResponse,
+    UpdateScheduleConfigRequest,
+    ScheduleConfigResponse,
+    ScheduleCapacityResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -134,6 +137,13 @@ async def list_categories(
                     keywords=cat.keywords,
                     exclude_keywords=cat.exclude_keywords,
                     is_active=cat.is_active,
+                    language=cat.language,
+                    country=cat.country,
+                    schedule_enabled=cat.schedule_enabled,
+                    schedule_interval_minutes=cat.schedule_interval_minutes,
+                    last_scheduled_run_at=cat.last_scheduled_run_at,
+                    next_scheduled_run_at=cat.next_scheduled_run_at,
+                    crawl_period=cat.crawl_period,
                     created_at=cat.created_at,
                     updated_at=cat.updated_at
                 ) for cat in categories
@@ -236,13 +246,20 @@ async def get_category(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Category with ID {category_id} not found"
             )
-        
+
         return CategoryResponse(
             id=category.id,
             name=category.name,
             keywords=category.keywords,
             exclude_keywords=category.exclude_keywords,
             is_active=category.is_active,
+            language=category.language,
+            country=category.country,
+            schedule_enabled=category.schedule_enabled,
+            schedule_interval_minutes=category.schedule_interval_minutes,
+            last_scheduled_run_at=category.last_scheduled_run_at,
+            next_scheduled_run_at=category.next_scheduled_run_at,
+            crawl_period=category.crawl_period,
             created_at=category.created_at,
             updated_at=category.updated_at
         )
@@ -290,7 +307,10 @@ async def update_category(
             name=request.name,
             keywords=request.keywords,
             exclude_keywords=request.exclude_keywords,
-            is_active=request.is_active
+            is_active=request.is_active,
+            language=request.language,
+            country=request.country,
+            crawl_period=request.crawl_period
         )
         
         if not updated_category:
@@ -305,6 +325,13 @@ async def update_category(
             keywords=updated_category.keywords,
             exclude_keywords=updated_category.exclude_keywords,
             is_active=updated_category.is_active,
+            language=updated_category.language,
+            country=updated_category.country,
+            schedule_enabled=updated_category.schedule_enabled,
+            schedule_interval_minutes=updated_category.schedule_interval_minutes,
+            last_scheduled_run_at=updated_category.last_scheduled_run_at,
+            next_scheduled_run_at=updated_category.next_scheduled_run_at,
+            crawl_period=updated_category.crawl_period,
             created_at=updated_category.created_at,
             updated_at=updated_category.updated_at
         )
@@ -406,4 +433,190 @@ async def search_categories(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to search categories"
+        )
+
+
+@router.patch(
+    "/{category_id}/schedule",
+    response_model=ScheduleConfigResponse,
+    summary="Update category schedule configuration",
+    description="Enable/disable automatic crawl scheduling for a category with specified interval.",
+    responses={
+        200: {"description": "Schedule configuration updated successfully"},
+        400: {"description": "Invalid schedule configuration"},
+        404: {"description": "Category not found"}
+    }
+)
+async def update_schedule_config(
+    category_id: UUID,
+    request: UpdateScheduleConfigRequest,
+    manager: CategoryManager = Depends(get_category_manager)
+) -> ScheduleConfigResponse:
+    """Update category schedule configuration."""
+    try:
+        # Get category
+        category = await manager.get_category_by_id(category_id)
+        if not category:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Category with ID {category_id} not found"
+            )
+
+        # Validate: only active categories can enable schedule
+        if request.enabled and not category.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot enable schedule for inactive category. Activate the category first."
+            )
+
+        # Update schedule configuration
+        repository = CategoryRepository()
+        updated_category = await repository.update_schedule_config(
+            category_id=category_id,
+            enabled=request.enabled,
+            interval_minutes=request.interval_minutes
+        )
+
+        if not updated_category:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Category with ID {category_id} not found"
+            )
+
+        return ScheduleConfigResponse(
+            category_id=updated_category.id,
+            category_name=updated_category.name,
+            schedule_enabled=updated_category.schedule_enabled,
+            schedule_interval_minutes=updated_category.schedule_interval_minutes,
+            schedule_display=updated_category.schedule_display,
+            last_scheduled_run_at=updated_category.last_scheduled_run_at,
+            next_scheduled_run_at=updated_category.next_scheduled_run_at,
+            next_run_display=updated_category.next_run_display
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update schedule config for category {category_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update schedule configuration"
+        )
+
+
+@router.get(
+    "/{category_id}/schedule",
+    response_model=ScheduleConfigResponse,
+    summary="Get category schedule configuration",
+    description="Retrieve the current schedule configuration for a category.",
+    responses={
+        200: {"description": "Schedule configuration retrieved successfully"},
+        404: {"description": "Category not found"}
+    }
+)
+async def get_schedule_config(
+    category_id: UUID,
+    manager: CategoryManager = Depends(get_category_manager)
+) -> ScheduleConfigResponse:
+    """Get category schedule configuration."""
+    try:
+        category = await manager.get_category_by_id(category_id)
+
+        if not category:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Category with ID {category_id} not found"
+            )
+
+        return ScheduleConfigResponse(
+            category_id=category.id,
+            category_name=category.name,
+            schedule_enabled=category.schedule_enabled,
+            schedule_interval_minutes=category.schedule_interval_minutes,
+            schedule_display=category.schedule_display,
+            last_scheduled_run_at=category.last_scheduled_run_at,
+            next_scheduled_run_at=category.next_scheduled_run_at,
+            next_run_display=category.next_run_display
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get schedule config for category {category_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve schedule configuration"
+        )
+
+
+@router.get(
+    "/schedules/capacity",
+    response_model=ScheduleCapacityResponse,
+    summary="Check system scheduling capacity",
+    description="Analyze current scheduling load and provide capacity recommendations.",
+    responses={
+        200: {"description": "Capacity analysis completed successfully"}
+    }
+)
+async def check_schedule_capacity() -> ScheduleCapacityResponse:
+    """Check system scheduling capacity and provide warnings/recommendations."""
+    try:
+        repository = CategoryRepository()
+
+        # Get all categories with enabled schedules
+        from sqlalchemy import select, and_
+        from src.database.models.category import Category
+        from src.database.connection import get_db_session
+
+        async with get_db_session() as session:
+            query = select(Category).where(
+                and_(
+                    Category.schedule_enabled == True,
+                    Category.is_active == True
+                )
+            )
+            result = await session.execute(query)
+            scheduled_categories = list(result.scalars().all())
+
+        # Calculate estimated jobs per hour
+        jobs_per_hour = 0
+        for cat in scheduled_categories:
+            if cat.schedule_interval_minutes:
+                jobs_per_hour += 60 / cat.schedule_interval_minutes
+
+        jobs_per_hour = int(jobs_per_hour)
+
+        # Determine capacity status
+        warnings = []
+        recommendations = []
+
+        if jobs_per_hour >= 100:
+            capacity_status = "critical"
+            warnings.append(f"CRITICAL: System is at maximum capacity ({jobs_per_hour} jobs/hour)")
+            warnings.append("New schedules may be rejected or delayed")
+            recommendations.append("Immediately disable or increase interval for some categories")
+            recommendations.append("Consider scaling up worker capacity")
+        elif jobs_per_hour >= 60:
+            capacity_status = "warning"
+            warnings.append(f"WARNING: High scheduling load ({jobs_per_hour} jobs/hour)")
+            warnings.append("Approaching system capacity limit (100 jobs/hour)")
+            recommendations.append("Consider increasing intervals for frequently scheduled categories")
+            recommendations.append("Monitor system performance closely")
+        else:
+            capacity_status = "normal"
+            recommendations.append(f"System capacity is healthy ({jobs_per_hour}/100 jobs per hour)")
+
+        return ScheduleCapacityResponse(
+            total_scheduled_categories=len(scheduled_categories),
+            estimated_jobs_per_hour=jobs_per_hour,
+            capacity_status=capacity_status,
+            warnings=warnings,
+            recommendations=recommendations
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to check schedule capacity: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check schedule capacity"
         )

@@ -154,41 +154,47 @@ class CategoryManager:
         name: Optional[str] = None,
         keywords: Optional[List[str]] = None,
         exclude_keywords: Optional[List[str]] = None,
-        is_active: Optional[bool] = None
+        is_active: Optional[bool] = None,
+        language: Optional[str] = None,
+        country: Optional[str] = None,
+        crawl_period: Optional[str] = None
     ) -> Optional[Category]:
         """Update an existing category.
-        
+
         Args:
             category_id: UUID of category to update
             name: New category name (optional)
             keywords: New keywords list (optional)
             exclude_keywords: New exclude keywords list (optional)
             is_active: New active status (optional)
-            
+            language: New language code (optional)
+            country: New country code (optional)
+            crawl_period: New crawl period (optional)
+
         Returns:
             Updated Category instance if found, None otherwise
-            
+
         Raises:
             CategoryValidationError: If validation fails
             CategoryNotFoundError: If category not found
             DuplicateCategoryNameError: If new name already exists
         """
         correlation_id = str(uuid4())
-        
+
         logger.info(f"Updating category {category_id}", extra={
             "correlation_id": correlation_id,
             "category_id": str(category_id)
         })
-        
+
         try:
             # Check if category exists
             existing_category = await self.repository.get_by_id(category_id)
             if not existing_category:
                 raise CategoryNotFoundError(f"Category with ID {category_id} not found")
-            
+
             # Build update data with validation
             update_data = {}
-            
+
             if name is not None:
                 self._validate_name(name)
                 # Check for duplicate name (excluding current category)
@@ -196,18 +202,27 @@ class CategoryManager:
                 if name_conflict and name_conflict.id != category_id:
                     raise DuplicateCategoryNameError(f"Category with name '{name}' already exists")
                 update_data['name'] = name.strip()
-            
+
             if keywords is not None:
                 self._validate_keywords(keywords)
                 update_data['keywords'] = [kw.strip() for kw in keywords if kw.strip()]
-            
+
             if exclude_keywords is not None:
                 self._validate_exclude_keywords(exclude_keywords)
                 update_data['exclude_keywords'] = [kw.strip() for kw in exclude_keywords if kw.strip()]
-            
+
             if is_active is not None:
                 update_data['is_active'] = is_active
-            
+
+            if language is not None:
+                update_data['language'] = language
+
+            if country is not None:
+                update_data['country'] = country
+
+            if crawl_period is not None:
+                update_data['crawl_period'] = crawl_period
+
             if not update_data:
                 logger.warning(f"No update data provided for category {category_id}", extra={
                     "correlation_id": correlation_id

@@ -257,6 +257,28 @@ export function JobArticlesModal({ job, isOpen, onClose }: JobArticlesModalProps
                       </div>
                     </div>
 
+                    {/* Categories */}
+                    {article.categories && article.categories.length > 0 && (
+                      <div className="mb-2">
+                        <span className="text-xs text-gray-500">Categories: </span>
+                        <div className="inline-flex flex-wrap gap-1">
+                          {article.categories.map(cat => (
+                            <span
+                              key={cat.id}
+                              className={`px-2 py-1 text-xs rounded-full ${
+                                cat.id === article.primary_category_id
+                                  ? 'bg-blue-600 text-white'
+                                  : 'bg-blue-100 text-blue-800'
+                              }`}
+                              title={`Relevance: ${Math.round(cat.relevance_score * 100)}%`}
+                            >
+                              {cat.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Keywords matched */}
                     {article.keywords_matched && article.keywords_matched.length > 0 && (
                       <div className="mb-2">
@@ -265,7 +287,7 @@ export function JobArticlesModal({ job, isOpen, onClose }: JobArticlesModalProps
                           {article.keywords_matched.map((keyword, index) => (
                             <span
                               key={index}
-                              className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full"
+                              className="px-2 py-1 text-xs bg-gray-100 rounded-full"
                             >
                               {keyword}
                             </span>

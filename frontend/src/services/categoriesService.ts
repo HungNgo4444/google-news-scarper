@@ -1,4 +1,10 @@
-import type { Category, CreateCategoryRequest, UpdateCategoryRequest } from '../types/shared';
+import type {
+  Category,
+  CreateCategoryRequest,
+  UpdateCategoryRequest,
+  UpdateScheduleConfigRequest,
+  ScheduleConfigResponse
+} from '../types/shared';
 import { apiClient } from './api';
 
 export class CategoriesService {
@@ -32,5 +38,19 @@ export class CategoriesService {
 
   static async toggleCategoryStatus(id: string, isActive: boolean): Promise<Category> {
     return apiClient.patch<Category>(`${this.baseUrl}/${id}`, { is_active: isActive });
+  }
+
+  static async updateScheduleConfig(
+    categoryId: string,
+    config: UpdateScheduleConfigRequest
+  ): Promise<ScheduleConfigResponse> {
+    return apiClient.patch<ScheduleConfigResponse>(
+      `${this.baseUrl}/${categoryId}/schedule`,
+      config
+    );
+  }
+
+  static async getScheduleConfig(categoryId: string): Promise<ScheduleConfigResponse> {
+    return apiClient.get<ScheduleConfigResponse>(`${this.baseUrl}/${categoryId}/schedule`);
   }
 }

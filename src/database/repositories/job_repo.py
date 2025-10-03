@@ -134,7 +134,8 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
         articles_saved: Optional[int] = None,
         error_message: Optional[str] = None,
         retry_count: Optional[int] = None,
-        correlation_id: Optional[str] = None
+        correlation_id: Optional[str] = None,
+        job_metadata: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Update job status and related metadata.
 
@@ -149,6 +150,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
             error_message: Error details if job failed
             retry_count: Number of retry attempts
             correlation_id: Correlation ID for tracking
+            job_metadata: Additional metadata (JSONB) for tracking events like rate limiting
 
         Returns:
             True if job was updated, False if not found
@@ -192,6 +194,10 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                     if correlation_id is not None:
                         update_fields.append("correlation_id = :correlation_id")
                         params["correlation_id"] = correlation_id
+                    if job_metadata is not None:
+                        import json
+                        update_fields.append("job_metadata = :job_metadata::jsonb")
+                        params["job_metadata"] = json.dumps(job_metadata)
 
                     raw_query = text(f"""
                         UPDATE crawl_jobs
@@ -242,7 +248,7 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                     cj.id, cj.category_id, cj.status, cj.celery_task_id,
                     cj.started_at, cj.completed_at, cj.articles_found, cj.articles_saved,
                     cj.error_message, cj.retry_count, cj.priority, cj.job_metadata,
-                    cj.correlation_id, cj.created_at, cj.updated_at
+                    cj.correlation_id, cj.created_at, cj.updated_at, cj.job_type
                 FROM crawl_jobs cj
                 WHERE cj.status IN ('pending', 'running')
                 ORDER BY cj.priority DESC, cj.created_at ASC
@@ -263,7 +269,46 @@ class CrawlJobRepository(BaseRepository[CrawlJob]):
                 jobs.append(job)
 
             return jobs
-    
+
+    async def get_all_jobs(self, limit: int = 100) -> List[CrawlJob]:
+        """Get all jobs regardless of status.
+
+        Args:
+            limit: Maximum number of jobs to return
+
+        Returns:
+            List of all jobs ordered by created_at (desc)
+        """
+        async with get_db_session() as session:
+            # Use raw SQL to avoid enum issues temporarily
+            from sqlalchemy import text
+
+            raw_query = text("""
+                SELECT
+                    cj.id, cj.category_id, cj.status, cj.celery_task_id,
+                    cj.started_at, cj.completed_at, cj.articles_found, cj.articles_saved,
+                    cj.error_message, cj.retry_count, cj.priority, cj.job_metadata,
+                    cj.correlation_id, cj.created_at, cj.updated_at, cj.job_type
+                FROM crawl_jobs cj
+                ORDER BY cj.created_at DESC
+                LIMIT :limit
+            """)
+
+            result = await session.execute(raw_query, {"limit": limit})
+            rows = result.fetchall()
+
+            # Convert rows to CrawlJob objects
+            jobs = []
+            for row in rows:
+                job_dict = dict(row._mapping)
+                # Create job without going through __init__ to avoid enum conversion
+                job = CrawlJob()
+                for key, value in job_dict.items():
+                    setattr(job, key, value)
+                jobs.append(job)
+
+            return jobs
+
     async def get_pending_jobs(self, limit: int = 50) -> List[CrawlJob]:
         """Get jobs that are pending execution.
         

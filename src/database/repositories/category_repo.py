@@ -37,7 +37,8 @@ Example:
 import logging
 from typing import Optional, List, Dict, Any
 from uuid import UUID
-from sqlalchemy import select, func, and_
+from datetime import datetime, timezone, timedelta
+from sqlalchemy import select, func, and_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -300,10 +301,10 @@ class CategoryRepository(BaseRepository[Category]):
     
     async def get_categories_with_articles(self) -> List[Category]:
         """Retrieve categories with their article associations loaded.
-        
+
         Uses eager loading to fetch categories along with their associated
         articles in a single query.
-        
+
         Returns:
             List of Category instances with articles relationship loaded
         """
@@ -313,6 +314,147 @@ class CategoryRepository(BaseRepository[Category]):
                 .options(selectinload(Category.articles))
                 .order_by(Category.name)
             )
-            
+
             result = await session.execute(query)
             return list(result.scalars().all())
+
+    async def get_due_scheduled_categories(self, current_time: datetime) -> List[Category]:
+        """Get categories with enabled schedules that are due for execution.
+
+        Args:
+            current_time: Current UTC datetime to compare against
+
+        Returns:
+            List of categories where schedule_enabled=true and next_scheduled_run_at <= current_time
+        """
+        async with get_db_session() as session:
+            query = (
+                select(Category)
+                .where(
+                    and_(
+                        Category.schedule_enabled == True,
+                        Category.is_active == True,
+                        Category.next_scheduled_run_at != None,
+                        Category.next_scheduled_run_at <= current_time
+                    )
+                )
+                .order_by(Category.next_scheduled_run_at.asc())
+            )
+
+            result = await session.execute(query)
+            categories = list(result.scalars().all())
+
+            logger.info(
+                f"Found {len(categories)} due scheduled categories",
+                extra={
+                    "count": len(categories),
+                    "current_time": current_time.isoformat(),
+                    "category_ids": [str(c.id) for c in categories]
+                }
+            )
+
+            return categories
+
+    async def update_schedule_timing(
+        self,
+        category_id: UUID,
+        last_run: datetime,
+        next_run: datetime
+    ) -> Optional[Category]:
+        """Update category schedule timing after job execution.
+
+        Args:
+            category_id: Category UUID
+            last_run: Timestamp of last execution
+            next_run: Calculated timestamp for next execution
+
+        Returns:
+            Updated Category object if found, None otherwise
+        """
+        async with get_db_session() as session:
+            stmt = (
+                update(Category)
+                .where(Category.id == category_id)
+                .values(
+                    last_scheduled_run_at=last_run,
+                    next_scheduled_run_at=next_run,
+                    updated_at=datetime.now(timezone.utc)
+                )
+                .returning(Category)
+            )
+
+            result = await session.execute(stmt)
+            await session.commit()
+
+            updated_category = result.scalar_one_or_none()
+
+            if updated_category:
+                logger.info(
+                    f"Updated schedule timing for category",
+                    extra={
+                        "category_id": str(category_id),
+                        "category_name": updated_category.name,
+                        "last_run": last_run.isoformat(),
+                        "next_run": next_run.isoformat()
+                    }
+                )
+
+            return updated_category
+
+    async def update_schedule_config(
+        self,
+        category_id: UUID,
+        enabled: bool,
+        interval_minutes: Optional[int] = None
+    ) -> Optional[Category]:
+        """Update category schedule configuration.
+
+        Args:
+            category_id: Category UUID
+            enabled: Whether schedule is enabled
+            interval_minutes: Schedule interval (1, 30, 60, 1440)
+
+        Returns:
+            Updated Category object if found, None otherwise
+        """
+        async with get_db_session() as session:
+            values = {
+                "schedule_enabled": enabled,
+                "updated_at": datetime.now(timezone.utc)
+            }
+
+            if interval_minutes is not None:
+                values["schedule_interval_minutes"] = interval_minutes
+
+            # Calculate next run if enabling
+            if enabled and interval_minutes:
+                values["next_scheduled_run_at"] = datetime.now(timezone.utc) + timedelta(minutes=interval_minutes)
+            elif not enabled:
+                # Clear next run if disabling
+                values["next_scheduled_run_at"] = None
+
+            stmt = (
+                update(Category)
+                .where(Category.id == category_id)
+                .values(**values)
+                .returning(Category)
+            )
+
+            result = await session.execute(stmt)
+            await session.commit()
+
+            updated_category = result.scalar_one_or_none()
+
+            if updated_category:
+                logger.info(
+                    f"Updated schedule config for category",
+                    extra={
+                        "category_id": str(category_id),
+                        "category_name": updated_category.name,
+                        "enabled": enabled,
+                        "interval_minutes": interval_minutes,
+                        "next_run": updated_category.next_scheduled_run_at.isoformat() if updated_category.next_scheduled_run_at else None
+                    }
+                )
+
+            return updated_category

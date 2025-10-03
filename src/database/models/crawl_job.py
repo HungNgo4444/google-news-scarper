@@ -16,6 +16,11 @@ class CrawlJobStatus(str, Enum):
     FAILED = "failed"
 
 
+class JobType(str, Enum):
+    SCHEDULED = "SCHEDULED"
+    ON_DEMAND = "ON_DEMAND"
+
+
 class CrawlJob(BaseModel):
     __tablename__ = "crawl_jobs"
     
@@ -102,7 +107,16 @@ class CrawlJob(BaseModel):
         nullable=True,
         index=True
     )
-    
+
+    # Job type (scheduled vs on-demand)
+    job_type: Mapped[JobType] = mapped_column(
+        SQLEnum(JobType, name="job_type_enum", values_callable=lambda x: [e.value for e in x]),
+        nullable=False,
+        default=JobType.ON_DEMAND,
+        index=True,
+        comment="Job trigger type: SCHEDULED or ON_DEMAND"
+    )
+
     # Relationships
     category: Mapped["Category"] = relationship(
         "Category",
@@ -142,7 +156,8 @@ class CrawlJob(BaseModel):
         Index("idx_crawl_jobs_completed_at", "completed_at"),
         Index("idx_crawl_jobs_priority", "priority"),
         Index("idx_crawl_jobs_correlation_id", "correlation_id"),
-        
+        Index("idx_crawl_jobs_job_type", "job_type"),
+
         # Composite indexes for common queries
         Index("idx_crawl_jobs_category_status", "category_id", "status"),
         Index("idx_crawl_jobs_status_priority", "status", "priority"),

@@ -860,7 +860,8 @@ class SyncCrawlerEngine:
         language: str = "en",
         country: str = "US",
         start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None
+        end_date: Optional[datetime] = None,
+        period: Optional[str] = None
     ) -> List[str]:
         """Search Google News using sync operations.
 
@@ -872,6 +873,7 @@ class SyncCrawlerEngine:
             country: Country code for search results
             start_date: Optional start date for filtering (datetime object)
             end_date: Optional end date for filtering (datetime object)
+            period: Optional time period for search (e.g., '1h', '7d', '1m'). Mutually exclusive with start_date/end_date.
 
         Returns:
             List of resolved article URLs (not Google News URLs)
@@ -900,26 +902,57 @@ class SyncCrawlerEngine:
             # Use GNews with enhanced URL resolution strategy
             import gnews
 
-            gn = gnews.GNews(
-                language=language.lower(),
-                country=country,
-                max_results=max_results
-            )
+            # Period and dates are mutually exclusive in GNews
+            # Period takes precedence for scheduled jobs, dates for on-demand jobs
+            if period and (start_date or end_date):
+                self.logger.warning(
+                    f"Both period ({period}) and dates provided. Period will be used for scheduled crawls."
+                )
 
-            # Apply date filtering if provided
-            if start_date:
-                gn.start_date = start_date
-                self.logger.info(f"Applied start_date filter: {start_date}")
-            if end_date:
-                gn.end_date = end_date
-                self.logger.info(f"Applied end_date filter: {end_date}")
+            # Initialize GNews with period if provided (for scheduled jobs)
+            if period:
+                gn = gnews.GNews(
+                    language=language.lower(),
+                    country=country,
+                    max_results=max_results,
+                    period=period
+                )
+                self.logger.info(f"Using period '{period}' for scheduled crawl")
+            else:
+                # Initialize without period (for on-demand jobs with date ranges)
+                gn = gnews.GNews(
+                    language=language.lower(),
+                    country=country,
+                    max_results=max_results
+                )
+
+                # Apply date filtering if provided
+                if start_date:
+                    gn.start_date = start_date
+                    self.logger.info(f"Applied start_date filter: {start_date}")
+                if end_date:
+                    gn.end_date = end_date
+                    self.logger.info(f"Applied end_date filter: {end_date}")
 
             # Search using GNews directly with encoded query
             search_results = gn.get_news(encoded_query)
 
-            if not search_results:
-                self.logger.warning(f"No results found for query: {search_query}")
-                return []
+            # Rate Limit Detection: If 0 articles returned, might be rate limited
+            # CRITICAL: Raise exception instead of blocking worker with time.sleep()
+            # This allows Celery to handle the retry properly without blocking other tasks
+            if not search_results or len(search_results) == 0:
+                self.logger.warning(
+                    f"Rate limit suspected: 0 articles returned for query '{search_query}'. "
+                    f"Raising RateLimitExceededError to trigger Celery retry after 5 minutes..."
+                )
+
+                # Raise exception to let Celery handle retry (non-blocking)
+                from src.shared.exceptions import RateLimitExceededError
+                raise RateLimitExceededError(
+                    message=f"Google News rate limit suspected: 0 results for query '{search_query}'",
+                    retry_after=300,  # 5 minutes
+                    details={"query": search_query, "keywords": keywords}
+                )
 
             # URL Statistics: Print how many URLs were found from Google News search
             self.logger.info(f"GOOGLE NEWS SEARCH STATISTICS: Found {len(search_results)} URLs from search query")
@@ -1229,7 +1262,112 @@ class SyncCrawlerEngine:
                 self.logger.warning(f"Extraction encountered errors but continuing: {str(e)}")
                 return []
 
-    def crawl_category_sync(self, category: Any, job_id: str = None, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
+    def crawl_with_daily_sliding_window(
+        self,
+        keywords: List[str],
+        exclude_keywords: List[str],
+        start_date: datetime,
+        end_date: datetime,
+        max_results_total: int,
+        language: str,
+        country: str
+    ) -> List[str]:
+        """Crawl date range by iterating day-by-day to avoid GNews chunking.
+
+        GNews has a behavior where it chunks multi-day date ranges into 7-day segments,
+        which can result in incomplete results. This method avoids that by crawling
+        each day separately and aggregating results.
+
+        Args:
+            keywords: List of keywords to search for
+            exclude_keywords: List of keywords to exclude
+            start_date: Start of date range (datetime object)
+            end_date: End of date range (datetime object)
+            max_results_total: Total maximum results to fetch across all days
+            language: Language code
+            country: Country code
+
+        Returns:
+            List of deduplicated article URLs from all daily crawls
+        """
+        from datetime import timedelta
+
+        # Calculate total days in range
+        total_days = (end_date - start_date).days + 1
+
+        if total_days <= 0:
+            self.logger.warning("Invalid date range: end_date must be after start_date")
+            return []
+
+        # Calculate max results per day (distribute evenly)
+        max_results_per_day = max(1, max_results_total // total_days)
+
+        self.logger.info(
+            f"Starting daily sliding window crawl: {total_days} days, "
+            f"{max_results_per_day} results/day (total target: {max_results_total})"
+        )
+
+        all_urls = []
+        seen_urls = set()
+
+        # Iterate through each day
+        for day_offset in range(total_days):
+            current_day_start = start_date + timedelta(days=day_offset)
+
+            # Set end to next day minus 1 second (GNews needs ≥1 day gap)
+            current_day_end = current_day_start + timedelta(days=1, seconds=-1)
+
+            day_str = current_day_start.strftime('%Y-%m-%d')
+            self.logger.info(
+                f"Day {day_offset + 1}/{total_days}: Crawling {day_str}"
+            )
+
+            try:
+                # Crawl this single day
+                day_urls = self.search_google_news(
+                    keywords=keywords,
+                    exclude_keywords=exclude_keywords,
+                    max_results=max_results_per_day,
+                    language=language,
+                    country=country,
+                    start_date=current_day_start,
+                    end_date=current_day_end,
+                    period=None  # Don't use period for date-specific crawls
+                )
+
+                # Deduplicate URLs
+                new_urls = [url for url in day_urls if url not in seen_urls]
+                for url in new_urls:
+                    seen_urls.add(url)
+                    all_urls.append(url)
+
+                self.logger.info(
+                    f"Day {day_offset + 1}/{total_days}: Found {len(day_urls)} articles "
+                    f"({len(new_urls)} new) for {day_str}"
+                )
+
+            except Exception as e:
+                self.logger.warning(
+                    f"Day {day_offset + 1}/{total_days}: Failed to crawl {day_str}: {e}"
+                )
+                continue
+
+        self.logger.info(
+            f"Daily sliding window complete: {len(all_urls)} unique URLs "
+            f"from {total_days} days"
+        )
+
+        return all_urls
+
+    def crawl_category_sync(
+        self,
+        category: Any,
+        job_id: str = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        max_results: Optional[int] = None,
+        period: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Crawl articles for a category using sync operations.
 
         Args:
@@ -1238,6 +1376,7 @@ class SyncCrawlerEngine:
             start_date: Optional start date for filtering articles
             end_date: Optional end date for filtering articles
             max_results: Optional maximum number of articles to crawl (uses settings default if None)
+            period: Optional time period for scheduled crawls (e.g., '1h', '7d', '1m')
 
         Returns:
             List of extracted article data
@@ -1264,15 +1403,38 @@ class SyncCrawlerEngine:
             self.logger.info(f"Searching with language='{language}', country='{country}' for category: {category.name}")
 
             # Get resolved article URLs (not Google News URLs)
-            article_urls = self.search_google_news(
-                keywords=category.keywords,
-                exclude_keywords=category.exclude_keywords or [],
-                max_results=effective_max_results,
-                language=language,
-                country=country,
-                start_date=start_date,
-                end_date=end_date
-            )
+            # Use period from category if available and no dates provided (for scheduled jobs)
+            # Use dates for on-demand jobs
+            crawl_period = period or getattr(category, 'crawl_period', None)
+
+            # Decision: Use daily sliding window if BOTH start_date AND end_date are provided
+            # This avoids GNews 7-day chunking behavior for date range crawls
+            if start_date and end_date:
+                self.logger.info(
+                    f"Using daily sliding window for date range: {start_date.strftime('%Y-%m-%d')} "
+                    f"to {end_date.strftime('%Y-%m-%d')}"
+                )
+                article_urls = self.crawl_with_daily_sliding_window(
+                    keywords=category.keywords,
+                    exclude_keywords=category.exclude_keywords or [],
+                    start_date=start_date,
+                    end_date=end_date,
+                    max_results_total=effective_max_results,
+                    language=language,
+                    country=country
+                )
+            else:
+                # Use normal search (with period or single date)
+                article_urls = self.search_google_news(
+                    keywords=category.keywords,
+                    exclude_keywords=category.exclude_keywords or [],
+                    max_results=effective_max_results,
+                    language=language,
+                    country=country,
+                    start_date=start_date,
+                    end_date=end_date,
+                    period=crawl_period if not (start_date or end_date) else None  # Only use period if no dates
+                )
 
             if not article_urls:
                 self.logger.warning(f"No resolved article URLs found for category: {category.name}")
@@ -1292,10 +1454,45 @@ class SyncCrawlerEngine:
             # Step 3: Save articles to database
             if extracted_articles:
                 from src.database.repositories.sync_article_repo import SyncArticleRepository
+                from src.core.crawler.keyword_matcher import enhance_articles_with_matched_keywords
 
+                # Step 3a: Enhance with keyword matching
+                enhanced_articles = enhance_articles_with_matched_keywords(
+                    extracted_articles,
+                    category.keywords or []
+                )
+
+                # Step 3b: Add relevance scoring (Binary: 50% title + 50% content)
+                scored_articles = []
+                for article in enhanced_articles:
+                    keywords = category.keywords or []
+                    matched = article.get('keywords_matched', [])
+
+                    if not keywords or not matched:
+                        article['relevance_score'] = 0.0
+                        scored_articles.append(article)
+                        continue
+
+                    # Get title and content
+                    title = (article.get('title', '') or '').lower()
+                    content = (article.get('content', '') or '').lower()
+
+                    # Check if ANY keyword appears in title or content
+                    has_title_match = any(kw.lower() in title for kw in matched)
+                    has_content_match = any(kw.lower() in content for kw in matched)
+
+                    # Binary scoring: 50% if matched in title, 50% if matched in content
+                    title_score = 0.5 if has_title_match else 0.0
+                    content_score = 0.5 if has_content_match else 0.0
+
+                    relevance = title_score + content_score
+                    article['relevance_score'] = relevance
+                    scored_articles.append(article)
+
+                # Step 3c: Save enhanced articles
                 article_repo = SyncArticleRepository()
                 saved_count = article_repo.save_articles_with_deduplication(
-                    extracted_articles, category.id, job_id
+                    scored_articles, category.id, job_id
                 )
 
                 self.logger.info(f"Crawled {len(extracted_articles)} articles, saved {saved_count} to database for category: {category.name}")

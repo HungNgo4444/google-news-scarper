@@ -56,16 +56,18 @@ export function CategoriesPage() {
   };
 
   const handleFormSubmit = async (data: CreateCategoryRequest | UpdateCategoryRequest) => {
+    let result;
     if (formMode === 'create') {
-      await CategoriesService.createCategory(data as CreateCategoryRequest);
+      result = await CategoriesService.createCategory(data as CreateCategoryRequest);
       showSuccess('Category created successfully');
     } else if (formMode === 'edit' && selectedCategory) {
-      await CategoriesService.updateCategory(selectedCategory.id, data);
+      result = await CategoriesService.updateCategory(selectedCategory.id, data);
       showSuccess('Category updated successfully');
     }
     setFormMode(null);
     setSelectedCategory(null);
     refresh();
+    return result; // Return created/updated category for schedule config
   };
 
   const handleConfirmDelete = async () => {

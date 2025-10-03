@@ -1432,8 +1432,8 @@ class ArticleRepository(BaseRepository[Article]):
             Tuple of (articles_list, total_count)
         """
         async with get_db_session() as session:
-            # Build base query
-            query = select(Article)
+            # Build base query with category relationships loaded
+            query = select(Article).options(selectinload(Article.categories))
             count_query = select(func.count(Article.id))
 
             # Apply filters if provided

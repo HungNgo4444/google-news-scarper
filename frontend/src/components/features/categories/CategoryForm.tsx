@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { Category, CreateCategoryRequest, UpdateCategoryRequest } from '../../../types/shared';
+import { ScheduleConfig } from './ScheduleConfig';
+import { CategoriesService } from '../../../services/categoriesService';
 
 interface CategoryFormProps {
   isOpen: boolean;
@@ -9,12 +11,12 @@ interface CategoryFormProps {
   title: string;
 }
 
-export function CategoryForm({ 
-  isOpen, 
-  onClose, 
-  onSubmit, 
-  initialData = null, 
-  title 
+export function CategoryForm({
+  isOpen,
+  onClose,
+  onSubmit,
+  initialData = null,
+  title
 }: CategoryFormProps) {
   const [formData, setFormData] = useState({
     name: '',
@@ -24,11 +26,14 @@ export function CategoryForm({
     language: 'vi',
     country: 'VN'
   });
-  
+
   const [keywordsInput, setKeywordsInput] = useState('');
   const [excludeKeywordsInput, setExcludeKeywordsInput] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleInterval, setScheduleInterval] = useState<number | null>(null);
+  const [crawlPeriod, setCrawlPeriod] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialData) {
@@ -42,6 +47,11 @@ export function CategoryForm({
       });
       setKeywordsInput(initialData.keywords.join(', '));
       setExcludeKeywordsInput(initialData.exclude_keywords.join(', '));
+
+      // Load schedule config for existing category
+      setScheduleEnabled(initialData.schedule_enabled || false);
+      setScheduleInterval(initialData.schedule_interval_minutes || null);
+      setCrawlPeriod(initialData.crawl_period || null);
     } else {
       setFormData({
         name: '',
@@ -53,6 +63,9 @@ export function CategoryForm({
       });
       setKeywordsInput('');
       setExcludeKeywordsInput('');
+      setScheduleEnabled(false);
+      setScheduleInterval(null);
+      setCrawlPeriod(null);
     }
     setErrors({});
   }, [initialData, isOpen]);
@@ -96,9 +109,42 @@ export function CategoryForm({
     setFormData(prev => ({ ...prev, exclude_keywords: parsedKeywords }));
   };
 
+  const handleScheduleChange = async (enabled: boolean, interval: number | null, period: string | null) => {
+    // Update local state immediately for UI responsiveness
+    setScheduleEnabled(enabled);
+    setScheduleInterval(interval);
+    setCrawlPeriod(period);
+
+    // If editing existing category, update via API immediately
+    // For new categories, will be set in handleSubmit after category creation
+    if (initialData?.id) {
+      try {
+        // Update schedule config if schedule settings changed
+        if (enabled !== initialData.schedule_enabled || interval !== initialData.schedule_interval_minutes) {
+          await CategoriesService.updateScheduleConfig(initialData.id, {
+            enabled,
+            interval_minutes: interval
+          });
+        }
+
+        // Always update crawl_period if changed (even when schedule disabled)
+        if (period !== initialData.crawl_period) {
+          await CategoriesService.updateCategory(initialData.id, { crawl_period: period });
+        }
+      } catch (err) {
+        console.error('Failed to update schedule or crawl_period:', err);
+        // Revert on error
+        setScheduleEnabled(initialData.schedule_enabled || false);
+        setScheduleInterval(initialData.schedule_interval_minutes || null);
+        setCrawlPeriod(initialData.crawl_period || null);
+        throw err;
+      }
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validateForm()) {
       return;
     }
@@ -106,7 +152,27 @@ export function CategoryForm({
     try {
       setSubmitting(true);
       setErrors({});
-      await onSubmit(formData);
+
+      // Submit category data (create or update)
+      const result = await onSubmit(formData);
+
+      // If creating new category with schedule enabled, update schedule after creation
+      if (!initialData && scheduleEnabled && scheduleInterval && result) {
+        try {
+          const createdCategory = result as any; // Type assertion for created category
+          if (createdCategory.id) {
+            await CategoriesService.updateScheduleConfig(createdCategory.id, {
+              enabled: scheduleEnabled,
+              interval_minutes: scheduleInterval
+            });
+          }
+        } catch (scheduleErr) {
+          console.error('Failed to set schedule for new category:', scheduleErr);
+          // Don't fail the whole operation - category was created successfully
+          setErrors({ general: 'Category created but schedule could not be set. Please edit to add schedule.' });
+        }
+      }
+
       onClose();
     } catch (err) {
       if (err instanceof Error) {
@@ -271,6 +337,15 @@ export function CategoryForm({
               Active (will be used for crawling)
             </label>
           </div>
+
+          <ScheduleConfig
+            categoryId={initialData?.id}
+            isActive={formData.is_active}
+            initialEnabled={scheduleEnabled}
+            initialInterval={scheduleInterval}
+            initialCrawlPeriod={crawlPeriod}
+            onChange={handleScheduleChange}
+          />
 
           <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
             <button

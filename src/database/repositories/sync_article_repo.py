@@ -11,6 +11,9 @@ from sqlalchemy.orm import selectinload
 from src.database.repositories.sync_base import SyncBaseRepository
 from src.database.models.article import Article
 from src.database.models.category import Category
+from src.database.models.article_category import ArticleCategory
+from src.core.linking.category_matcher import CategoryMatcher
+from src.database.repositories.sync_category_repo import SyncCategoryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,9 @@ class SyncArticleRepository(SyncBaseRepository[Article]):
                             continue
 
                         # Create new article
+                        relevance_score = article_data.get('relevance_score', 1.0)
+                        logger.debug(f"Creating article with relevance_score: {relevance_score}")
+
                         new_article = Article(
                             title=article_data.get('title', '').strip(),
                             content=article_data.get('content', '').strip(),
@@ -88,11 +94,52 @@ class SyncArticleRepository(SyncBaseRepository[Article]):
                             image_url=article_data.get('image_url') or article_data.get('top_image', '').strip() or None,
                             last_seen=datetime.now(timezone.utc),
                             keywords_matched=article_data.get('keywords_matched', []),
-                            relevance_score=1.0,
+                            relevance_score=relevance_score,
                             crawl_job_id=UUID(job_id) if job_id else None
                         )
 
                         session.add(new_article)
+                        session.flush()  # Flush to get article ID before linking
+
+                        # Create primary ArticleCategory association
+                        primary_association = ArticleCategory(
+                            article_id=new_article.id,
+                            category_id=category_id,
+                            relevance_score=relevance_score
+                        )
+                        session.add(primary_association)
+
+                        # Multi-category auto-linking
+                        try:
+                            category_repo = SyncCategoryRepository()
+                            all_categories = category_repo.get_active_categories()
+
+                            # Filter out primary category
+                            other_categories = [c for c in all_categories if str(c.id) != str(category_id)]
+
+                            if other_categories:
+                                matcher = CategoryMatcher()
+                                matches = matcher.find_matching_categories(
+                                    article_data,
+                                    other_categories,
+                                    min_relevance=0.3
+                                )
+
+                                # Create ArticleCategory for each match
+                                for match in matches:
+                                    link_association = ArticleCategory(
+                                        article_id=new_article.id,
+                                        category_id=UUID(match['category_id']),
+                                        relevance_score=match['relevance_score']
+                                    )
+                                    session.add(link_association)
+
+                                if matches:
+                                    logger.debug(f"Linked article to {len(matches)} additional categories")
+
+                        except Exception as link_error:
+                            logger.warning(f"Multi-category linking failed: {link_error}")
+                            # Continue without linking - primary category association is already created
 
                         session.commit()
                         saved_count += 1

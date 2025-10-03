@@ -4,6 +4,7 @@ import { CategoriesService } from '../../../services/categoriesService';
 import type { JobResponse, Category } from '../../../types/shared';
 import JobActionButtons from './JobActionButtons';
 import JobEditModal from './JobEditModal';
+import { JobTypeBadge } from './JobTypeBadge';
 
 const STATUS_COLORS = {
   pending: 'text-yellow-600 bg-yellow-50 border-yellow-200',
@@ -37,6 +38,7 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
   // Filters
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [jobTypeFilter, setJobTypeFilter] = useState<string>('');
   const [limit] = useState(20);
 
   const loadCategories = async () => {
@@ -56,7 +58,8 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
       const params = {
         limit,
         ...(statusFilter && { status: statusFilter }),
-        ...(categoryFilter && { category_id: categoryFilter })
+        ...(categoryFilter && { category_id: categoryFilter }),
+        ...(jobTypeFilter && { job_type: jobTypeFilter })
       };
 
       const response = await JobsService.getJobs(params);
@@ -68,7 +71,7 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
     } finally {
       setLoading(false);
     }
-  }, [limit, statusFilter, categoryFilter]);
+  }, [limit, statusFilter, categoryFilter, jobTypeFilter]);
 
   useEffect(() => {
     loadCategories();
@@ -76,7 +79,7 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
 
   useEffect(() => {
     loadJobs();
-  }, [statusFilter, categoryFilter, refreshTrigger, loadJobs]);
+  }, [statusFilter, categoryFilter, jobTypeFilter, refreshTrigger, loadJobs]);
 
   const handleRefresh = () => {
     loadJobs();
@@ -154,7 +157,7 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
       </div>
 
       {/* Filters */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div>
           <label htmlFor="status-filter" className="block text-sm font-medium text-gray-700 mb-1">
             Filter by Status
@@ -189,6 +192,22 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
                 {category.name}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="jobtype-filter" className="block text-sm font-medium text-gray-700 mb-1">
+            Filter by Type
+          </label>
+          <select
+            id="jobtype-filter"
+            value={jobTypeFilter}
+            onChange={(e) => setJobTypeFilter(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          >
+            <option value="">All Types</option>
+            <option value="SCHEDULED">Scheduled</option>
+            <option value="ON_DEMAND">Manual</option>
           </select>
         </div>
       </div>
@@ -228,6 +247,9 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
                     Job ID
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Type
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Category
                   </th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -251,6 +273,9 @@ export function JobsList({ refreshTrigger = 0, onNavigateToArticles }: JobsListP
                       <div className="text-sm font-mono text-gray-900">
                         {job.id ? job.id.substring(0, 8) : 'unknown'}...
                       </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <JobTypeBadge jobType={job.job_type || 'ON_DEMAND'} />
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{job.category_name}</div>

@@ -360,13 +360,23 @@ def _handle_sync_task_error(
         "is_retryable": is_retryable
     })
 
-    # Update job status
+    # Update job status with metadata tracking for rate limiting
     try:
+        # Prepare job_metadata if rate limit error detected
+        job_metadata = None
+        if error_category == "rate_limit":
+            job_metadata = {
+                "rate_limited": True,
+                "rate_limit_detected_at": datetime.now(timezone.utc).isoformat(),
+                "error_message": error_msg
+            }
+
         job_repo.update_status(
             job_id=job_id,
             status=CrawlJobStatus.FAILED,
             error_message=error_msg,
-            completed_at=datetime.now(timezone.utc)
+            completed_at=datetime.now(timezone.utc),
+            job_metadata=job_metadata
         )
     except Exception as db_error:
         logger.error(f"Failed to update job status: {db_error}", extra={
@@ -1141,10 +1151,115 @@ def _sync_trigger_category_crawl_task(
         }
 
 
+@celery_app.task(bind=True, max_retries=2)
+def scan_scheduled_categories_task(self) -> Dict[str, Any]:
+    """Scan categories with enabled schedules and trigger overdue jobs.
+
+    This task runs every minute via Celery Beat and checks for categories
+    where next_scheduled_run_at <= current time.
+
+    Returns:
+        Dictionary containing scan results and triggered job information
+    """
+    from src.database.repositories.sync_category_repo import SyncCategoryRepository
+    from src.database.repositories.sync_job_repo import SyncCrawlJobRepository
+    from src.database.models.crawl_job import JobType
+
+    correlation_id = f"schedule_scan_{uuid4()}"
+    current_time = datetime.now(timezone.utc)
+
+    logger.info("Starting scheduled categories scan", extra={
+        "correlation_id": correlation_id,
+        "scan_time": current_time.isoformat()
+    })
+
+    category_repo = SyncCategoryRepository()
+    job_repo = SyncCrawlJobRepository()
+
+    # Find categories due for scheduled crawl
+    due_categories = category_repo.get_due_scheduled_categories(current_time)
+
+    triggered_jobs = []
+    errors = []
+
+    for category in due_categories:
+        try:
+            # Create scheduled job
+            job = job_repo.create(
+                category_id=category.id,
+                priority=0,  # Default priority for scheduled jobs
+                correlation_id=f"{correlation_id}_cat_{category.id}",
+                job_metadata={
+                    "triggered_by": "schedule_scanner",
+                    "schedule_interval": category.schedule_interval_minutes,
+                    "scan_time": current_time.isoformat()
+                },
+                status=CrawlJobStatus.PENDING,
+                job_type=JobType.SCHEDULED
+            )
+
+            # Trigger crawl task
+            crawl_result = crawl_category_task.delay(
+                category_id=str(category.id),
+                job_id=str(job.id)
+            )
+
+            # Update category schedule timing
+            next_run = current_time + timedelta(minutes=category.schedule_interval_minutes)
+            category_repo.update_schedule_timing(
+                category_id=category.id,
+                last_run=current_time,
+                next_run=next_run
+            )
+
+            triggered_jobs.append({
+                "category_id": str(category.id),
+                "category_name": category.name,
+                "job_id": str(job.id),
+                "celery_task_id": crawl_result.id,
+                "next_run": next_run.isoformat()
+            })
+
+            logger.info(f"Triggered scheduled job for category {category.name}", extra={
+                "correlation_id": correlation_id,
+                "category_id": str(category.id),
+                "job_id": str(job.id),
+                "next_run": next_run.isoformat()
+            })
+
+        except Exception as e:
+            error_msg = f"Failed to trigger scheduled job for category {category.id}: {str(e)}"
+            logger.error(error_msg, extra={
+                "correlation_id": correlation_id,
+                "category_id": str(category.id),
+                "error": str(e)
+            })
+            errors.append({
+                "category_id": str(category.id),
+                "error": str(e)
+            })
+
+    result = {
+        "status": "completed",
+        "correlation_id": correlation_id,
+        "scan_time": current_time.isoformat(),
+        "categories_scanned": len(due_categories),
+        "jobs_triggered": len(triggered_jobs),
+        "errors": len(errors),
+        "triggered_jobs": triggered_jobs,
+        "error_details": errors
+    }
+
+    logger.info("Scheduled categories scan completed", extra=result)
+
+    return result
+
+
 # Task registration with Celery
 __all__ = [
     "crawl_category_task",
-    "cleanup_old_jobs_task", 
+    "cleanup_old_jobs_task",
     "monitor_job_health_task",
-    "trigger_category_crawl_task"
+    "trigger_category_crawl_task",
+    "scan_scheduled_categories_task"
 ]

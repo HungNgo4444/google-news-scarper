@@ -284,11 +284,11 @@ async def list_jobs(
         elif status_enum == CrawlJobStatus.FAILED:
             jobs = await job_repo.get_failed_jobs(limit=limit)
         else:
-            # Get all active jobs by default
-            jobs = await job_repo.get_active_jobs(limit=limit)
+            # Get all jobs regardless of status when no filter is provided
+            jobs = await job_repo.get_all_jobs(limit=limit)
 
         # Get status counts for summary
-        all_jobs = await job_repo.get_active_jobs(limit=1000)  # Get more for accurate counts
+        all_jobs = await job_repo.get_all_jobs(limit=1000)  # Get all jobs for accurate counts
         status_counts = {}
         for status_value in CrawlJobStatus:
             status_counts[status_value.value] = sum(1 for job in all_jobs if job.status == status_value)
@@ -327,6 +327,7 @@ async def list_jobs(
                 error_message=job.error_message,
                 retry_count=job.retry_count,
                 priority=job.priority,
+                job_type=job.job_type,
                 correlation_id=job.correlation_id,
                 created_at=job.created_at,
                 updated_at=job.updated_at,
@@ -533,6 +534,7 @@ async def update_job_priority(
             error_message=updated_job.error_message,
             retry_count=updated_job.retry_count,
             priority=updated_job.priority,
+            job_type=updated_job.job_type,
             correlation_id=updated_job.correlation_id,
             created_at=updated_job.created_at,
             updated_at=updated_job.updated_at,
@@ -645,6 +647,7 @@ async def update_job(
             error_message=updated_job.error_message,
             retry_count=updated_job.retry_count,
             priority=updated_job.priority,
+            job_type=updated_job.job_type,
             correlation_id=updated_job.correlation_id,
             created_at=updated_job.created_at,
             updated_at=updated_job.updated_at,

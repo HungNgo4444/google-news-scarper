@@ -8,6 +8,11 @@ export interface Category {
   is_active: boolean;
   language: string;
   country: string;
+  schedule_enabled?: boolean;
+  schedule_interval_minutes?: number | null;
+  last_scheduled_run_at?: string | null;
+  next_scheduled_run_at?: string | null;
+  crawl_period?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -19,6 +24,7 @@ export interface CreateCategoryRequest {
   is_active: boolean;
   language: string;
   country: string;
+  crawl_period?: string | null;
 }
 
 export interface UpdateCategoryRequest {
@@ -28,6 +34,7 @@ export interface UpdateCategoryRequest {
   is_active?: boolean;
   language?: string;
   country?: string;
+  crawl_period?: string | null;
 }
 
 export interface ApiError {
@@ -60,6 +67,7 @@ export interface JobResponse {
   retry_count: number;
   priority: number;
   correlation_id: string | null;
+  job_type?: 'SCHEDULED' | 'ON_DEMAND';
   created_at: string;
   updated_at: string;
   duration_seconds: number | null;
@@ -82,4 +90,29 @@ export interface JobListResponse {
   running_count: number;
   completed_count: number;
   failed_count: number;
+}
+
+// Schedule configuration interfaces
+export interface UpdateScheduleConfigRequest {
+  enabled: boolean;
+  interval_minutes?: number | null;
+}
+
+export interface ScheduleConfigResponse {
+  category_id: string;
+  category_name: string;
+  schedule_enabled: boolean;
+  schedule_interval_minutes: number | null;
+  schedule_display: string;
+  last_scheduled_run_at: string | null;
+  next_scheduled_run_at: string | null;
+  next_run_display: string | null;
+}
+
+export interface ScheduleCapacityResponse {
+  total_scheduled_categories: number;
+  estimated_jobs_per_hour: number;
+  capacity_status: 'normal' | 'warning' | 'critical';
+  warnings: string[];
+  recommendations: string[];
 }

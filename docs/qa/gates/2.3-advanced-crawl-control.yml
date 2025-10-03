@@ -1,0 +1,118 @@
+# Quality Gate: Story 2.3 - Advanced Crawl Control Features
+schema: 1
+story: "2.3"
+story_title: "Advanced Crawl Control Features"
+gate: CONCERNS
+status_reason: "Implementation functionally complete with critical blocking issue FIXED during QA review. However, zero tests exist despite story requirements. Code quality good but test gap creates risk."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-10-02T00:00:00Z"
+
+waiver: { active: false }
+
+top_issues:
+  - id: "TEST-001"
+    severity: high
+    finding: "Zero tests exist for Story 2.3 features despite story specifying comprehensive unit and integration tests"
+    suggested_action: "Implement required tests as specified in story Tasks section lines 119-149"
+    refs: ["tests/unit/models/test_category_crawl_period.py (missing)", "tests/unit/crawler/test_gnews_period.py (missing)", "tests/unit/crawler/test_daily_sliding_window.py (missing)"]
+
+  - id: "PERF-001-FIXED"
+    severity: low
+    finding: "FIXED by QA: Synchronous time.sleep(300) replaced with RateLimitExceededError exception"
+    suggested_action: "COMPLETED: Now uses Celery retry mechanism with countdown=300 (non-blocking)"
+    refs: ["src/core/crawler/sync_engine.py:940-955"]
+
+  - id: "IMPL-001-FIXED"
+    severity: low
+    finding: "FIXED by QA: job_metadata tracking added for rate limit events"
+    suggested_action: "COMPLETED: Added job_metadata parameter to update_status() and tracking logic in error handler"
+    refs: ["src/database/repositories/job_repo.py:138", "src/core/scheduler/tasks.py:363-385"]
+
+  - id: "SEC-001"
+    severity: medium
+    finding: "Date range DoS prevention validator recommended in story (lines 201-211) not implemented"
+    suggested_action: "Add validator in CreateJobRequest schema to limit max date range to 90 days"
+    refs: ["src/api/schemas/job.py"]
+
+  - id: "DOC-001"
+    severity: low
+    finding: "Documentation updates specified in story tasks (lines 150-156) not completed"
+    suggested_action: "Update docs/architecture/data-models.md and API Swagger documentation"
+    refs: ["docs/architecture/data-models.md"]
+
+risk_summary:
+  totals: { critical: 0, high: 1, medium: 2, low: 3 }
+  highest:
+    score: 6
+    category: "Testing"
+    item: "Zero automated tests for new features"
+  recommendations:
+    must_fix:
+      - "Implement comprehensive test suite as specified in story"
+    monitor:
+      - "Add date range DoS prevention validator"
+      - "Complete documentation updates"
+
+quality_score: 60
+# Score: 100 - (10*1 high) - (10*2 medium) - (3*3 low) = 60 (improved from 40 after QA fixes)
+
+evidence:
+  tests_reviewed: 0
+  risks_identified: 5
+  trace:
+    ac_covered: []
+    ac_gaps: [1, 2, 3]  # All 3 ACs lack test coverage
+
+nfr_validation:
+  security:
+    status: CONCERNS
+    notes: "Defense-in-depth validation implemented correctly (frontend/backend/database). Missing DoS prevention for date ranges. No SQL injection risks detected."
+  performance:
+    status: PASS
+    notes: "FIXED: Celery worker blocking issue resolved. Daily sliding window may cause performance issues for large date ranges without the recommended 90-day limit validator (recommend future enhancement)."
+  reliability:
+    status: PASS
+    notes: "FIXED: Rate limit detection with proper exception handling and job_metadata tracking. No automated tests but logic verified during review."
+  maintainability:
+    status: PASS
+    notes: "Code well-organized, properly documented with docstrings, follows project coding standards. Enhanced period support (h/d/m/w/y) beyond requirements is good."
+
+qa_refactoring_completed:
+  - action: "✓ COMPLETED: Replaced time.sleep(300) with RateLimitExceededError exception"
+    refs: ["src/core/crawler/sync_engine.py:940-955"]
+    impact: "Non-blocking Celery retry mechanism, worker remains available"
+
+  - action: "✓ COMPLETED: Added job_metadata parameter to update_status() method"
+    refs: ["src/database/repositories/job_repo.py:138"]
+    impact: "Enables JSONB metadata tracking for rate limit events"
+
+  - action: "✓ COMPLETED: Implemented job_metadata tracking in error handler"
+    refs: ["src/core/scheduler/tasks.py:363-385"]
+    impact: "Rate limit events now tracked in database with timestamp"
+
+recommendations:
+  immediate:
+    - action: "Implement unit tests for crawl_period validation (P0)"
+      refs: ["tests/unit/models/test_category_crawl_period.py"]
+      estimate: "2 hours"
+
+    - action: "Implement unit tests for GNews period parameter handling (P0)"
+      refs: ["tests/unit/crawler/test_gnews_period.py"]
+      estimate: "1.5 hours"
+
+    - action: "Implement unit tests for daily sliding window logic (P0)"
+      refs: ["tests/unit/crawler/test_daily_sliding_window.py"]
+      estimate: "2 hours"
+
+  future:
+    - action: "Add date range validator to prevent DoS (max 90 days)"
+      refs: ["src/api/schemas/job.py"]
+
+    - action: "Implement integration tests for scheduled crawl with period"
+      refs: ["tests/integration/test_scheduled_crawl_with_period.py"]
+
+    - action: "Implement integration tests for daily sliding window"
+      refs: ["tests/integration/test_ondemand_daily_sliding.py"]
+
+    - action: "Update documentation as specified in story"
+      refs: ["docs/architecture/data-models.md", "API Swagger docs"]
